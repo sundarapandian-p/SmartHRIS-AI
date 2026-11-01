@@ -8,25 +8,33 @@ from typing import Any
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from smarthris.schemas.import_job import ImportJobRead
+from smarthris.schemas.import_job import ImportErrorListResponse, ImportJobRead
 from streamlit_app.api_client import ApiError
 from streamlit_app.pages.bulk_import import (
     MAX_UPLOAD_BYTES,
     PREVIEW_ROW_LIMIT,
+    SESSION_ERROR_FETCH_ERROR,
+    SESSION_ERROR_SNAPSHOT,
     SESSION_IN_FLIGHT,
     SESSION_JOB_ID,
     SESSION_JOB_SNAPSHOT,
     SESSION_LAST_STATUS,
     SESSION_POLL_ENABLED,
+    SESSION_RETRY_IN_FLIGHT,
+    SESSION_SOURCE_JOB_ID,
     SESSION_STATUS_ERROR,
     CsvPreviewError,
+    error_list_to_rows,
+    fetch_and_store_import_errors,
     fetch_and_store_job_status,
     is_active_status,
+    is_retry_eligible,
     is_terminal_status,
     job_snapshot_from_model,
     normalize_status,
     preview_csv,
     should_auto_poll,
+    should_fetch_import_errors,
     validate_csv_selection,
 )
 
@@ -67,15 +75,43 @@ def _job(**overrides: object) -> ImportJobRead:
     return ImportJobRead.model_validate(base)
 
 
+def _error_list(
+    job_id: str,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    total: int = 0,
+    items: list[dict[str, Any]] | None = None,
+) -> ImportErrorListResponse:
+    rows = items or []
+    pages = (total + page_size - 1) // page_size if total else 0
+    return ImportErrorListResponse.model_validate(
+        {
+            "import_job_id": job_id,
+            "items": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
+    )
+
+
 class RecordingClient:
-    """Fake API client recording upload/status calls."""
+    """Fake API client recording upload/status/error/retry calls."""
 
     def __init__(self, job: ImportJobRead | None = None) -> None:
         self.job = job or _job()
         self.upload_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
+        self.error_calls: list[dict[str, Any]] = []
+        self.retry_calls: list[str] = []
         self.get_error: Exception | None = None
+        self.list_errors_error: Exception | None = None
+        self.retry_error: Exception | None = None
         self.get_sequence: list[ImportJobRead] | None = None
+        self.error_payload: ImportErrorListResponse | None = None
+        self.retry_result: ImportJobRead | None = None
         self._get_index = 0
 
     def upload_import(self, **kwargs: Any) -> ImportJobRead:
@@ -90,7 +126,33 @@ class RecordingClient:
             idx = min(self._get_index, len(self.get_sequence) - 1)
             self._get_index += 1
             return self.get_sequence[idx]
-        return self.job
+        if self.job.id == job_id:
+            return self.job
+        return _job(id=job_id, status=normalize_status(self.job.status))
+
+    def list_import_errors(
+        self,
+        job_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> ImportErrorListResponse:
+        self.error_calls.append(
+            {"job_id": job_id, "page": page, "page_size": page_size}
+        )
+        if self.list_errors_error is not None:
+            raise self.list_errors_error
+        if self.error_payload is not None:
+            return self.error_payload
+        return _error_list(job_id, page=page, page_size=page_size, total=0, items=[])
+
+    def retry_import(self, job_id: str) -> ImportJobRead:
+        self.retry_calls.append(job_id)
+        if self.retry_error is not None:
+            raise self.retry_error
+        if self.retry_result is not None:
+            return self.retry_result
+        return _job(id="child-job-1", status="pending", parent_job_id=job_id)
 
 
 def _run_page(api_client=None) -> AppTest:
@@ -578,3 +640,265 @@ def test_automatic_polling_uses_active_statuses() -> None:
     assert should_auto_poll(job_id="x", status="running", poll_enabled=True)
     assert not should_auto_poll(job_id="x", status="completed", poll_enabled=True)
     assert not should_auto_poll(job_id="x", status="failed", poll_enabled=True)
+
+
+# --- Phase 4.5: errors + retry ------------------------------------------------
+
+
+def test_retry_eligibility_matches_backend_rules() -> None:
+    assert is_retry_eligible(_job(status="failed").model_dump(mode="json"))
+    assert is_retry_eligible(
+        _job(status="completed", failed_count=2).model_dump(mode="json")
+    )
+    assert not is_retry_eligible(
+        _job(status="completed", failed_count=0).model_dump(mode="json")
+    )
+    assert not is_retry_eligible(_job(status="pending").model_dump(mode="json"))
+    assert not is_retry_eligible(_job(status="running").model_dump(mode="json"))
+    assert not is_retry_eligible(
+        _job(status="failed", dry_run=True).model_dump(mode="json")
+    )
+
+
+def test_should_fetch_errors_only_when_needed() -> None:
+    assert should_fetch_import_errors(
+        _job(status="failed").model_dump(mode="json")
+    )
+    assert should_fetch_import_errors(
+        _job(status="completed", failed_count=1).model_dump(mode="json")
+    )
+    assert not should_fetch_import_errors(
+        _job(status="completed", failed_count=0).model_dump(mode="json")
+    )
+    assert not should_fetch_import_errors(
+        _job(status="pending").model_dump(mode="json")
+    )
+
+
+def test_error_list_to_rows_maps_schema_fields() -> None:
+    payload = {
+        "items": [
+            {
+                "id": 9,
+                "row_number": 3,
+                "employee_number": "E3",
+                "field": "work_email",
+                "code": "invalid_email",
+                "message": "Invalid email",
+            }
+        ]
+    }
+    rows = error_list_to_rows(payload)
+    assert rows == [
+        {
+            "row_number": 3,
+            "employee_number": "E3",
+            "field": "work_email",
+            "code": "invalid_email",
+            "message": "Invalid email",
+        }
+    ]
+
+
+def test_fetch_errors_pagination_and_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {}
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    client = RecordingClient(_job(id="err-job"))
+    client.error_payload = _error_list(
+        "err-job",
+        page=2,
+        page_size=1,
+        total=2,
+        items=[
+            {
+                "id": 2,
+                "row_number": 5,
+                "employee_number": None,
+                "field": "department_id",
+                "code": "missing_required",
+                "message": "Missing department",
+            }
+        ],
+    )
+    payload, err = fetch_and_store_import_errors(
+        client,  # type: ignore[arg-type]
+        "err-job",
+        page=2,
+        page_size=1,
+    )
+    assert err is None
+    assert payload is not None
+    assert payload["page"] == 2
+    assert payload["total"] == 2
+    assert client.error_calls[-1] == {"job_id": "err-job", "page": 2, "page_size": 1}
+
+    client.error_payload = _error_list("err-job", page=1, page_size=20, total=0, items=[])
+    payload, err = fetch_and_store_import_errors(
+        client,  # type: ignore[arg-type]
+        "err-job",
+        page=1,
+        page_size=20,
+    )
+    assert err is None
+    assert payload is not None
+    assert payload["total"] == 0
+    assert payload["items"] == []
+
+
+def test_fetch_errors_api_failure_preserves_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {SESSION_JOB_ID: "keep-errors"}
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    client = RecordingClient()
+    client.list_errors_error = ApiError("Cannot reach the API at http://test.local.")
+    _payload, err = fetch_and_store_import_errors(
+        client,  # type: ignore[arg-type]
+        "keep-errors",
+        page=1,
+        page_size=20,
+    )
+    assert err is not None
+    assert session[SESSION_JOB_ID] == "keep-errors"
+    assert session[SESSION_ERROR_FETCH_ERROR]
+
+
+def test_error_listing_ui_shows_rows_and_pagination() -> None:
+    job = _job(id="partial-1", status="completed", failed_count=2, total_rows=5)
+    client = RecordingClient(job)
+    client.error_payload = _error_list(
+        "partial-1",
+        page=1,
+        page_size=20,
+        total=2,
+        items=[
+            {
+                "id": 1,
+                "row_number": 2,
+                "employee_number": "E2",
+                "field": "work_email",
+                "code": "invalid_email",
+                "message": "Invalid email",
+            },
+            {
+                "id": 2,
+                "row_number": 4,
+                "employee_number": "E4",
+                "field": None,
+                "code": "duplicate_in_file",
+                "message": "Duplicate employee number",
+            },
+        ],
+    )
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "partial-1"
+    at.session_state[SESSION_JOB_SNAPSHOT] = job.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "completed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.run()
+    assert client.error_calls
+    assert any("Import errors" in t.value for t in at.subheader)
+    assert at.dataframe
+    assert any("2 error" in c.value for c in at.caption)
+
+
+def test_empty_error_results_ui() -> None:
+    job = _job(id="failed-empty", status="failed", failed_count=0)
+    client = RecordingClient(job)
+    client.error_payload = _error_list("failed-empty", total=0, items=[])
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "failed-empty"
+    at.session_state[SESSION_JOB_SNAPSHOT] = job.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "failed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.run()
+    assert any("No import row errors" in i.value for i in at.info)
+
+
+def test_error_api_failure_ui_keeps_job_id() -> None:
+    job = _job(id="err-ui", status="failed", failed_count=1)
+    client = RecordingClient(job)
+    client.list_errors_error = ApiError("The API request timed out.")
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "err-ui"
+    at.session_state[SESSION_JOB_SNAPSHOT] = job.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "failed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.run()
+    assert at.session_state[SESSION_JOB_ID] == "err-ui"
+    assert any("timed out" in w.value.lower() for w in at.warning) or any(
+        "timed out" in e.value.lower() for e in at.error
+    )
+
+
+def test_retry_hidden_when_not_eligible() -> None:
+    job = _job(id="ok-1", status="completed", failed_count=0)
+    client = RecordingClient(job)
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "ok-1"
+    at.session_state[SESSION_JOB_SNAPSHOT] = job.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "completed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.run()
+    assert not any(b.label == "Retry import" for b in at.button)
+    assert any("cannot be retried" in c.value.lower() for c in at.caption)
+
+
+def test_retry_requires_confirmation() -> None:
+    job = _job(id="retry-parent", status="completed", failed_count=3)
+    client = RecordingClient(job)
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "retry-parent"
+    at.session_state[SESSION_JOB_SNAPSHOT] = job.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "completed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.run()
+    retry_buttons = [b for b in at.button if b.label == "Retry import"]
+    assert retry_buttons
+    assert retry_buttons[0].disabled
+    assert client.retry_calls == []
+
+
+def test_retry_success_tracks_new_job_id() -> None:
+    parent = _job(id="retry-parent", status="failed", failed_count=1)
+    child = _job(id="retry-child", status="pending", parent_job_id="retry-parent")
+    client = RecordingClient(parent)
+    client.retry_result = child
+    client.job = parent
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "retry-parent"
+    at.session_state[SESSION_SOURCE_JOB_ID] = "retry-parent"
+    at.session_state[SESSION_JOB_SNAPSHOT] = parent.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "failed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.run()
+
+    # Confirm then submit.
+    confirm = [c for c in at.checkbox if "confirm" in (c.label or "").lower()]
+    assert confirm
+    confirm[0].check().run()
+    client.job = child  # subsequent status fetches return child
+    retry_buttons = [b for b in at.button if b.label == "Retry import"]
+    retry_buttons[0].click().run()
+
+    assert client.retry_calls == ["retry-parent"]
+    assert at.session_state[SESSION_JOB_ID] == "retry-child"
+    assert at.session_state[SESSION_SOURCE_JOB_ID] == "retry-parent"
+    assert at.session_state[SESSION_LAST_STATUS] == "pending"
+    assert at.session_state[SESSION_POLL_ENABLED] is True
+    assert at.session_state.get(SESSION_RETRY_IN_FLIGHT) is False
+
+
+def test_duplicate_retry_prevention() -> None:
+    job = _job(id="dup-parent", status="completed", failed_count=1)
+    client = RecordingClient(job)
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "dup-parent"
+    at.session_state[SESSION_JOB_SNAPSHOT] = job.model_dump(mode="json")
+    at.session_state[SESSION_LAST_STATUS] = "completed"
+    at.session_state[SESSION_POLL_ENABLED] = False
+    at.session_state[SESSION_RETRY_IN_FLIGHT] = True
+    at.run()
+    assert any("already submitted" in w.value.lower() for w in at.warning)
+    assert client.retry_calls == []
+    assert not any(b.label == "Retry import" for b in at.button)

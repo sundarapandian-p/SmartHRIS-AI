@@ -35,6 +35,14 @@ SESSION_LAST_STATUS = "bulk_import_last_status"
 SESSION_JOB_SNAPSHOT = "bulk_import_job_snapshot"
 SESSION_STATUS_ERROR = "bulk_import_status_error"
 SESSION_IN_FLIGHT = "bulk_import_status_in_flight"
+SESSION_SOURCE_JOB_ID = "bulk_import_source_job_id"
+SESSION_ERROR_PAGE = "bulk_import_error_page"
+SESSION_ERROR_PAGE_SIZE = "bulk_import_error_page_size"
+SESSION_ERROR_SNAPSHOT = "bulk_import_error_snapshot"
+SESSION_ERROR_FETCH_ERROR = "bulk_import_error_fetch_error"
+SESSION_RETRY_IN_FLIGHT = "bulk_import_retry_in_flight"
+
+DEFAULT_ERROR_PAGE_SIZE = 20
 
 
 # Preview dialect aligned with backend ``smarthris_csv`` (strict quoting).
@@ -174,6 +182,36 @@ def should_auto_poll(
     return status in ACTIVE_STATUSES
 
 
+def is_retry_eligible(snapshot: dict[str, Any] | None) -> bool:
+    """
+    Mirror backend ``_retry_eligibility_conflict`` (UI gate only; API is authoritative).
+
+    Eligible: non-dry-run ``failed``, or ``completed`` with ``failed_count > 0``.
+    """
+    if not snapshot:
+        return False
+    if bool(snapshot.get("dry_run")):
+        return False
+    status = normalize_status(snapshot.get("status"))
+    failed_count = int(snapshot.get("failed_count") or 0)
+    if status == STATUS_FAILED:
+        return True
+    if status == STATUS_COMPLETED and failed_count > 0:
+        return True
+    return False
+
+
+def should_fetch_import_errors(snapshot: dict[str, Any] | None) -> bool:
+    """Fetch row errors only for terminal jobs that may have persisted issues."""
+    if not snapshot or not is_terminal_status(snapshot.get("status")):
+        return False
+    status = normalize_status(snapshot.get("status"))
+    failed_count = int(snapshot.get("failed_count") or 0)
+    if status == STATUS_FAILED:
+        return True
+    return failed_count > 0
+
+
 def format_timestamp(value: object) -> str:
     if value is None or value == "":
         return "—"
@@ -192,6 +230,10 @@ def job_snapshot_from_model(job: Any) -> dict[str, Any]:
 
 
 def apply_job_snapshot(snapshot: dict[str, Any]) -> None:
+    previous_id = None
+    previous = st.session_state.get(SESSION_JOB_SNAPSHOT)
+    if isinstance(previous, dict):
+        previous_id = previous.get("id")
     st.session_state[SESSION_JOB_SNAPSHOT] = snapshot
     st.session_state[SESSION_LAST_STATUS] = normalize_status(snapshot.get("status"))
     st.session_state[SESSION_STATUS_ERROR] = None
@@ -199,6 +241,11 @@ def apply_job_snapshot(snapshot: dict[str, Any]) -> None:
         st.session_state[SESSION_POLL_ENABLED] = False
     else:
         st.session_state[SESSION_POLL_ENABLED] = True
+    # Reset error pagination/cache when the tracked job changes.
+    if snapshot.get("id") != previous_id:
+        st.session_state[SESSION_ERROR_PAGE] = 1
+        st.session_state.pop(SESSION_ERROR_SNAPSHOT, None)
+        st.session_state.pop(SESSION_ERROR_FETCH_ERROR, None)
 
 
 def fetch_and_store_job_status(
@@ -236,6 +283,12 @@ def _display_job_snapshot(snapshot: dict[str, Any]) -> None:
     status = normalize_status(snapshot.get("status"))
     st.markdown(f"**Import Job ID:** `{snapshot.get('id', '—')}`")
     st.markdown(f"**Status:** `{status}`")
+    parent_job_id = snapshot.get("parent_job_id")
+    if parent_job_id:
+        st.caption(f"Parent job (retry source): `{parent_job_id}`")
+    source_job_id = st.session_state.get(SESSION_SOURCE_JOB_ID)
+    if source_job_id and source_job_id != snapshot.get("id"):
+        st.caption(f"Original uploaded job: `{source_job_id}`")
     cols = st.columns(4)
     cols[0].metric("Total rows", snapshot.get("total_rows", 0))
     cols[1].metric("Processed", snapshot.get("processed_rows", 0))
@@ -260,6 +313,206 @@ def _display_job_snapshot(snapshot: dict[str, Any]) -> None:
         st.info("Import job is running…")
     elif status == STATUS_PENDING:
         st.info("Import job is pending…")
+
+
+def error_list_to_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map API error items to a compact table (actual schema fields only)."""
+    rows: list[dict[str, Any]] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "row_number": item.get("row_number"),
+                "employee_number": item.get("employee_number"),
+                "field": item.get("field"),
+                "code": item.get("code"),
+                "message": item.get("message"),
+            }
+        )
+    return rows
+
+
+def fetch_and_store_import_errors(
+    client: SmartHrisApiClient,
+    job_id: str,
+    *,
+    page: int,
+    page_size: int,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """GET /imports/{id}/errors — preserves Job ID on failure."""
+    if not job_id:
+        return None, "No import Job ID is available."
+    try:
+        result = client.list_import_errors(job_id, page=page, page_size=page_size)
+        payload = result.model_dump(mode="json")
+        st.session_state[SESSION_ERROR_SNAPSHOT] = payload
+        st.session_state[SESSION_ERROR_FETCH_ERROR] = None
+        st.session_state[SESSION_JOB_ID] = job_id
+        return payload, None
+    except ApiError as exc:
+        st.session_state[SESSION_ERROR_FETCH_ERROR] = str(exc)
+        st.session_state[SESSION_JOB_ID] = job_id
+        return st.session_state.get(SESSION_ERROR_SNAPSHOT), str(exc)
+
+
+def _render_error_report(
+    *,
+    api_client: SmartHrisApiClient | None,
+    snapshot: dict[str, Any],
+) -> None:
+    st.divider()
+    st.subheader("Import errors")
+
+    job_id = str(snapshot.get("id") or st.session_state.get(SESSION_JOB_ID) or "")
+    if not job_id:
+        return
+
+    if not should_fetch_import_errors(snapshot):
+        st.info("No import row errors for this job.")
+        return
+
+    page = int(st.session_state.get(SESSION_ERROR_PAGE) or 1)
+    page_size = int(st.session_state.get(SESSION_ERROR_PAGE_SIZE) or DEFAULT_ERROR_PAGE_SIZE)
+
+    controls = st.columns([1, 1, 1])
+    with controls[0]:
+        page = st.number_input(
+            "Page",
+            min_value=1,
+            value=max(page, 1),
+            step=1,
+            key="bulk_import_error_page_input",
+        )
+    with controls[1]:
+        page_size = st.selectbox(
+            "Page size",
+            options=[10, 20, 50, 100],
+            index=[10, 20, 50, 100].index(page_size)
+            if page_size in {10, 20, 50, 100}
+            else 1,
+            key="bulk_import_error_page_size_input",
+        )
+    with controls[2]:
+        reload_clicked = st.button("Reload errors", key="bulk_import_reload_errors")
+
+    st.session_state[SESSION_ERROR_PAGE] = int(page)
+    st.session_state[SESSION_ERROR_PAGE_SIZE] = int(page_size)
+
+    cached = st.session_state.get(SESSION_ERROR_SNAPSHOT)
+    cache_matches = (
+        isinstance(cached, dict)
+        and cached.get("import_job_id") == job_id
+        and int(cached.get("page") or 0) == int(page)
+        and int(cached.get("page_size") or 0) == int(page_size)
+    )
+    if reload_clicked or not cache_matches:
+        client = api_client if api_client is not None else SmartHrisApiClient()
+        _payload, error = fetch_and_store_import_errors(
+            client,
+            job_id,
+            page=int(page),
+            page_size=int(page_size),
+        )
+        if error:
+            st.warning(f"Could not load import errors: {error}")
+
+    payload = st.session_state.get(SESSION_ERROR_SNAPSHOT)
+    fetch_error = st.session_state.get(SESSION_ERROR_FETCH_ERROR)
+    if not payload:
+        if fetch_error:
+            st.error(fetch_error)
+        else:
+            st.info("No import row errors returned.")
+        return
+
+    total = int(payload.get("total") or 0)
+    pages = int(payload.get("pages") or 0)
+    st.caption(
+        f"Job `{payload.get('import_job_id', job_id)}` — "
+        f"{total} error(s), page {payload.get('page', page)} of {pages or 1}"
+    )
+    rows = error_list_to_rows(payload)
+    if not rows:
+        st.info("No import row errors on this page.")
+        return
+    st.dataframe(rows, width="stretch", hide_index=True)
+
+
+def _render_retry_section(
+    *,
+    api_client: SmartHrisApiClient | None,
+    snapshot: dict[str, Any],
+) -> None:
+    st.divider()
+    st.subheader("Retry import")
+
+    if not is_retry_eligible(snapshot):
+        status = normalize_status(snapshot.get("status"))
+        if snapshot.get("dry_run"):
+            st.caption("Dry-run jobs cannot be retried.")
+        elif status in ACTIVE_STATUSES:
+            st.caption("Retry is available after the job finishes.")
+        elif status == STATUS_COMPLETED and int(snapshot.get("failed_count") or 0) == 0:
+            st.caption("Successful imports (zero failed rows) cannot be retried.")
+        else:
+            st.caption("This job cannot be retried.")
+        return
+
+    job_id = str(snapshot.get("id") or "")
+    st.markdown(
+        "Creates a **new child import job** that reprocesses this job's stored CSV. "
+        "The original Job ID is kept for reference; tracking switches to the child."
+    )
+
+    if st.session_state.get(SESSION_RETRY_IN_FLIGHT):
+        st.warning("A retry request was already submitted. Wait for the new job to appear.")
+        return
+
+    confirmed = st.checkbox(
+        "I confirm I want to retry this import",
+        value=False,
+        key="bulk_import_retry_confirm",
+    )
+    retry_clicked = st.button(
+        "Retry import",
+        type="secondary",
+        key="bulk_import_retry_submit",
+        disabled=not confirmed,
+    )
+    if not retry_clicked:
+        return
+    if not confirmed:
+        st.warning("Confirm retry before submitting.")
+        return
+
+    st.session_state[SESSION_RETRY_IN_FLIGHT] = True
+    client = api_client if api_client is not None else SmartHrisApiClient()
+    try:
+        child = client.retry_import(job_id)
+    except ApiError as exc:
+        st.session_state[SESSION_RETRY_IN_FLIGHT] = False
+        st.error(str(exc))
+        # Keep tracking the original job.
+        st.session_state[SESSION_JOB_ID] = job_id
+        return
+    except Exception:
+        st.session_state[SESSION_RETRY_IN_FLIGHT] = False
+        st.error("Retry failed due to an unexpected client error.")
+        st.session_state[SESSION_JOB_ID] = job_id
+        return
+
+    # Preserve original uploaded / parent relationship, then track the child.
+    if not st.session_state.get(SESSION_SOURCE_JOB_ID):
+        st.session_state[SESSION_SOURCE_JOB_ID] = job_id
+    st.session_state[SESSION_JOB_ID] = child.id
+    apply_job_snapshot(job_snapshot_from_model(child))
+    st.session_state[SESSION_RETRY_IN_FLIGHT] = False
+    st.success(
+        f"Retry accepted. New Job ID: `{child.id}` "
+        f"(parent: `{child.parent_job_id or job_id}`)."
+    )
+    st.rerun()
 
 
 def _job_status_panel(
@@ -313,8 +566,8 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
     """Render CSV upload controls and import job status (poll when non-terminal)."""
     st.title(NAV_BULK_IMPORT)
     st.caption(
-        "Upload an employee CSV to create an import job, then follow status here. "
-        "Error review and retry are not part of this page yet."
+        "Upload an employee CSV to create an import job, follow status, "
+        "review row errors, and retry eligible failed/partial imports."
     )
     st.markdown(
         "The API expects CSV columns such as **Employee Number**, **First Name**, "
@@ -417,6 +670,8 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
                         )
                     else:
                         st.session_state[SESSION_JOB_ID] = job.id
+                        st.session_state[SESSION_SOURCE_JOB_ID] = job.id
+                        st.session_state[SESSION_RETRY_IN_FLIGHT] = False
                         apply_job_snapshot(job_snapshot_from_model(job))
                         st.success("Upload accepted. Import job created.")
                         st.markdown(f"**Import Job ID:** `{job.id}`")
@@ -443,6 +698,11 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
     else:
         st.caption("Automatic polling is stopped for terminal jobs. Use Refresh Status to update.")
         _static_job_status_panel(api_client)
+
+    snapshot = st.session_state.get(SESSION_JOB_SNAPSHOT)
+    if isinstance(snapshot, dict) and is_terminal_status(snapshot.get("status")):
+        _render_error_report(api_client=api_client, snapshot=snapshot)
+        _render_retry_section(api_client=api_client, snapshot=snapshot)
 
 
 # Streamlit page runner executes this file as __main__.
