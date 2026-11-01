@@ -1,7 +1,8 @@
 # SmartHRIS-AI
 
 Learning project: HRIS with bulk uploads, LMS, and hybrid RAG (later phases).  
-**Phase 0** — FastAPI, MySQL, Alembic, `/health`. **Phase 1** — `departments` / `employees` tables and employee CRUD API.
+**Phase 0** — FastAPI, MySQL, Alembic, `/health`. **Phase 1** — `departments` / `employees` tables and employee CRUD API.  
+**Frontend** — Streamlit shell (`streamlit_app/`) as a thin client over the API.
 
 ## Prerequisites (Windows)
 
@@ -91,7 +92,24 @@ Example when MySQL is reachable:
 
 `database.status` is `"ok"` only after the API runs `SELECT 1` against MySQL. If the server is down or credentials are wrong, you will see `"error"` while the API process itself still returns `"status":"ok"`.
 
-## 7. Run tests
+## 7. Run the Streamlit frontend
+
+Start the API first (section 6), then from the repository root with the venv activated:
+
+```powershell
+python -m streamlit run streamlit_app/app.py
+```
+
+Optional: point the UI at a non-default API base URL:
+
+```powershell
+$env:API_BASE_URL = "http://127.0.0.1:8000"
+python -m streamlit run streamlit_app/app.py
+```
+
+The shell provides sidebar pages **Dashboard**, **Employees**, and **Bulk Import**. Dashboard can check `GET /health`. Employee listing and CSV bulk-upload workflows are not implemented in this foundation phase.
+
+## 8. Run tests
 
 ```powershell
 pytest
@@ -117,12 +135,13 @@ GRANT ALL PRIVILEGES ON smarthris_test.* TO 'smarthris'@'localhost';
 | `src/smarthris/schemas/` | Pydantic API contracts |
 | `src/smarthris/repositories/` | SQL queries (no HTTP) |
 | `src/smarthris/services/` | Business rules and transactions |
-| `src/smarthris/api/routers/` | HTTP routes (`health`, `employees`) |
+| `src/smarthris/api/routers/` | HTTP routes (`health`, `employees`, `imports`) |
 | `src/smarthris/core/` | Domain errors and exception handlers |
+| `streamlit_app/` | Streamlit UI shell (`app.py`, `api_client.py`, `pages/`) |
 | `alembic/` | Migration scripts; `env.py` reads `DATABASE_URL` |
-| `tests/` | pytest (config, health, employee API) |
+| `tests/` | pytest (config, health, employee/import API, Streamlit client) |
 | `docs/` | Requirements, architecture, roadmap |
 
 ## Next phase
 
-See `docs/development-roadmap.md` — **Phase 2**: Bulk CSV import.
+See `docs/development-roadmap.md` for planned milestones. Frontend bulk-import UI and employee listing pages build on this Streamlit shell.
