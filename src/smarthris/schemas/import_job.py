@@ -25,3 +25,27 @@ class ImportJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+
+class ImportErrorRead(BaseModel):
+    """One persisted import row error (no job path or internal metadata)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    row_number: int
+    employee_number: str | None
+    field: str | None
+    code: str
+    message: str
+
+
+class ImportErrorListResponse(BaseModel):
+    """Paginated import errors for a single job."""
+
+    import_job_id: str
+    items: list[ImportErrorRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int

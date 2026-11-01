@@ -11,14 +11,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from smarthris.config import Settings
 from smarthris.importing.parsers.csv_parser import CsvParseError, parse_csv
 from smarthris.importing.storage import import_storage_path
+from smarthris.importing.types import ImportRowIssue
+from smarthris.importing.validation.error_codes import ImportErrorCode
 from smarthris.importing.validation.row_validator import (
     ImportRowValidator,
     ValidatedImportRow,
 )
 from smarthris.models.employee import Employee
+from smarthris.models.import_error import ImportError
 from smarthris.models.import_job import ImportJobStatus
 from smarthris.repositories.department_repository import DepartmentRepository
 from smarthris.repositories.employee_repository import EmployeeRepository
+from smarthris.repositories.import_error_repository import ImportErrorRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
 
 logger = logging.getLogger(__name__)
@@ -50,12 +54,35 @@ def _employee_from_validated(item: ValidatedImportRow) -> Employee:
     )
 
 
+def _import_error_from_issue(job_id: str, issue: ImportRowIssue) -> ImportError:
+    return ImportError(
+        import_job_id=job_id,
+        row_number=issue.row_number,
+        employee_number=issue.employee_number,
+        field=issue.field,
+        code=issue.code,
+        message=issue.message,
+    )
+
+
+def _import_error_from_insert_failure(job_id: str, item: ValidatedImportRow) -> ImportError:
+    return ImportError(
+        import_job_id=job_id,
+        row_number=item.row_number,
+        employee_number=item.row.employee_number,
+        field=None,
+        code=ImportErrorCode.ALREADY_EXISTS.value,
+        message=(
+            f"Employee '{item.row.employee_number}' could not be inserted "
+            "due to a unique constraint conflict"
+        ),
+    )
+
+
 class ImportProcessingService:
     """
-    Validate uploaded CSV rows and insert valid employees in batches.
-
-    Uses an independent SQLAlchemy session from ``session_factory``.
-    Does not persist ImportError rows (Phase 3.6).
+    Validate uploaded CSV rows, persist ImportError rows in bounded batches,
+    and insert valid employees in separate transactions.
     """
 
     def __init__(
@@ -117,8 +144,10 @@ class ImportProcessingService:
             success_count = 0
             failed_count = 0
             buffer: list[ValidatedImportRow] = []
+            error_buffer: list[ImportError] = []
             batch_size = self._settings.import_batch_size
             employees_repo = EmployeeRepository(session)
+            errors_repo = ImportErrorRepository(session)
 
             validator = ImportRowValidator(
                 department_repository=DepartmentRepository(session),
@@ -129,6 +158,14 @@ class ImportProcessingService:
                 total_rows += 1
                 if not result.is_valid or result.validated is None:
                     failed_count += 1
+                    for issue in result.issues:
+                        self._queue_error(
+                            session,
+                            errors_repo,
+                            error_buffer,
+                            _import_error_from_issue(job_id, issue),
+                            batch_size,
+                        )
                     continue
 
                 if dry_run:
@@ -137,24 +174,60 @@ class ImportProcessingService:
 
                 buffer.append(result.validated)
                 if len(buffer) >= batch_size:
-                    inserted, failed = self._flush_insert_buffer(
+                    inserted, failed_items = self._flush_insert_buffer(
                         session,
                         employees_repo,
                         buffer,
                     )
                     success_count += inserted
-                    failed_count += failed
+                    failed_count += len(failed_items)
+                    for item in failed_items:
+                        self._queue_error(
+                            session,
+                            errors_repo,
+                            error_buffer,
+                            _import_error_from_insert_failure(job_id, item),
+                            batch_size,
+                        )
                     buffer.clear()
 
             if buffer:
-                inserted, failed = self._flush_insert_buffer(
+                inserted, failed_items = self._flush_insert_buffer(
                     session,
                     employees_repo,
                     buffer,
                 )
                 success_count += inserted
-                failed_count += failed
+                failed_count += len(failed_items)
+                for item in failed_items:
+                    self._queue_error(
+                        session,
+                        errors_repo,
+                        error_buffer,
+                        _import_error_from_insert_failure(job_id, item),
+                        batch_size,
+                    )
                 buffer.clear()
+
+            try:
+                self._flush_error_buffer(session, errors_repo, error_buffer)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to persist import errors for job %s before completion",
+                    job_id,
+                )
+                try:
+                    session.rollback()
+                except Exception:
+                    pass
+                self._mark_failed_safe(
+                    session,
+                    job_id,
+                    _sanitize_error_message(
+                        f"Import processing failed while saving errors: {exc}"
+                    ),
+                )
+                return
 
             job = jobs.get_by_id(job_id)
             if job is None:
@@ -172,7 +245,11 @@ class ImportProcessingService:
             session.commit()
         except CsvParseError as exc:
             logger.warning("CSV parse failed for import job %s: %s", job_id, exc.message)
-            session.rollback()
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("Rollback failed after CSV parse error for %s", job_id)
+            self._persist_parse_issues_safe(session, job_id, exc.issues)
             self._mark_failed_safe(
                 session,
                 job_id,
@@ -190,27 +267,92 @@ class ImportProcessingService:
                 _sanitize_error_message(f"Import processing failed: {exc}"),
             )
 
+    def _queue_error(
+        self,
+        session: Session,
+        errors_repo: ImportErrorRepository,
+        error_buffer: list[ImportError],
+        error: ImportError,
+        batch_size: int,
+    ) -> None:
+        """Buffer an error; flush+commit in bounded batches (never with employee txns)."""
+        error_buffer.append(error)
+        if len(error_buffer) >= batch_size:
+            self._flush_error_buffer(session, errors_repo, error_buffer)
+
+    def _flush_error_buffer(
+        self,
+        session: Session,
+        errors_repo: ImportErrorRepository,
+        error_buffer: list[ImportError],
+    ) -> None:
+        """
+        Persist buffered errors in one add_many + commit.
+
+        Errors live only in the Python list until this call, so employee
+        IntegrityError rollbacks cannot erase uncommitted ImportError rows.
+        """
+        if not error_buffer:
+            return
+        # Copy before clear so a failed flush does not silently drop the batch.
+        batch = list(error_buffer)
+        errors_repo.add_many(batch)
+        session.commit()
+        error_buffer.clear()
+
+    def _persist_parse_issues_safe(
+        self,
+        session: Session,
+        job_id: str,
+        issues: Sequence[ImportRowIssue],
+    ) -> None:
+        """Best-effort persistence of structured CSV parse issues after rollback."""
+        if not issues:
+            return
+        batch_size = self._settings.import_batch_size
+        try:
+            errors_repo = ImportErrorRepository(session)
+            buffer: list[ImportError] = []
+            for issue in issues:
+                buffer.append(_import_error_from_issue(job_id, issue))
+                if len(buffer) >= batch_size:
+                    errors_repo.add_many(buffer)
+                    session.commit()
+                    buffer.clear()
+            if buffer:
+                errors_repo.add_many(buffer)
+                session.commit()
+        except Exception:
+            logger.exception(
+                "Unable to persist CSV parse issues for import job %s",
+                job_id,
+            )
+            try:
+                session.rollback()
+            except Exception:
+                pass
+
     def _flush_insert_buffer(
         self,
         session: Session,
         employees_repo: EmployeeRepository,
         buffer: Sequence[ValidatedImportRow],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, list[ValidatedImportRow]]:
         """
-        Insert one batch. Returns (success_count, failed_count).
+        Insert one batch. Returns (success_count, failed_validated_rows).
 
-        On IntegrityError, rolls back the batch and retries each row with a savepoint.
-        Previously committed batches are unaffected.
+        On IntegrityError, rolls back the batch and retries each row individually.
+        Previously committed batches are unaffected. Does not stage ImportError rows.
         """
         if not buffer:
-            return 0, 0
+            return 0, []
 
         employees = [_employee_from_validated(item) for item in buffer]
         try:
             employees_repo.add_many(employees)
             session.flush()
             session.commit()
-            return len(employees), 0
+            return len(employees), []
         except IntegrityError:
             logger.info(
                 "Batch insert hit IntegrityError for %s rows; retrying individually",
@@ -224,15 +366,15 @@ class ImportProcessingService:
         session: Session,
         employees_repo: EmployeeRepository,
         buffer: Sequence[ValidatedImportRow],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, list[ValidatedImportRow]]:
         """
         Insert each row in its own short transaction after a failed batch.
 
-        Uses flush+commit per row (with rollback on conflict) so the session
-        stays usable and earlier successful rows in this retry remain kept.
+        Returns failed ValidatedImportRow items so callers can persist ImportError
+        rows with the original CSV row_number outside this transaction.
         """
         inserted = 0
-        failed = 0
+        failed_items: list[ValidatedImportRow] = []
         for item in buffer:
             try:
                 employees_repo.add(_employee_from_validated(item))
@@ -241,8 +383,8 @@ class ImportProcessingService:
                 inserted += 1
             except IntegrityError:
                 session.rollback()
-                failed += 1
-        return inserted, failed
+                failed_items.append(item)
+        return inserted, failed_items
 
     def _mark_failed_safe(self, session: Session, job_id: str, error_message: str) -> None:
         """Best-effort failed transition; may open a fresh session if needed."""

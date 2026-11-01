@@ -286,12 +286,15 @@ def test_integrity_error_retries_individually(
         ),
     ]
 
-    inserted, failed = service._flush_insert_buffer(
+    inserted, failed_items = service._flush_insert_buffer(
         db_session,
         EmployeeRepository(db_session),
         buffer,
     )
-    assert (inserted, failed) == (1, 1), (inserted, failed)
+    assert inserted == 1
+    assert len(failed_items) == 1
+    assert failed_items[0].row_number == 2
+    assert failed_items[0].row.employee_number == "IE-EXIST"
     assert _employee_count(db_session) == before + 1
     assert EmployeeRepository(db_session).find_existing_employee_numbers(["IE-NEW"]) == {
         "IE-NEW"

@@ -1,14 +1,15 @@
-"""Create pending import jobs from CSV uploads (no parsing or inserts)."""
+"""Create pending import jobs from CSV uploads and query import errors."""
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from smarthris.config import Settings
-from smarthris.core.exceptions import PayloadTooLargeError, StorageError, ValidationError
+from smarthris.core.exceptions import NotFoundError, PayloadTooLargeError, StorageError, ValidationError
 from smarthris.importing.storage import (
     assert_csv_filename,
     delete_import_file,
@@ -19,8 +20,9 @@ from smarthris.importing.storage import (
     save_upload_stream,
 )
 from smarthris.models.import_job import ImportFileType, ImportJob
+from smarthris.repositories.import_error_repository import ImportErrorRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
-from smarthris.schemas.import_job import ImportJobRead
+from smarthris.schemas.import_job import ImportErrorListResponse, ImportErrorRead, ImportJobRead
 
 
 class ImportUploadService:
@@ -28,6 +30,7 @@ class ImportUploadService:
         self._session = session
         self._settings = settings
         self._jobs = ImportJobRepository(session)
+        self._errors = ImportErrorRepository(session)
 
     def create_from_upload(
         self,
@@ -68,6 +71,30 @@ class ImportUploadService:
             self._session.rollback()
             delete_import_file(destination)
             raise
+
+    def list_errors(
+        self,
+        job_id: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> ImportErrorListResponse:
+        job = self._jobs.get_by_id(job_id)
+        if job is None:
+            raise NotFoundError("Import job not found")
+
+        total = self._errors.count_for_job(job_id)
+        offset = (page - 1) * page_size
+        rows = self._errors.list_for_job(job_id, offset=offset, limit=page_size)
+        pages = math.ceil(total / page_size) if total else 0
+        return ImportErrorListResponse(
+            import_job_id=job_id,
+            items=[ImportErrorRead.model_validate(row) for row in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=pages,
+        )
 
     def stored_path_for_job(self, job: ImportJob) -> Path:
         """Helper for later phases; not exposed via API."""
