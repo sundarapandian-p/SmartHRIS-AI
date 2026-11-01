@@ -36,6 +36,18 @@ class Settings(BaseSettings):
 
     test_database_url: str | None = Field(default=None, validation_alias="TEST_DATABASE_URL")
 
+    import_batch_size: int = Field(default=500, validation_alias="IMPORT_BATCH_SIZE")
+    max_upload_bytes: int = Field(
+        default=52_428_800,
+        validation_alias="MAX_UPLOAD_BYTES",
+        description="Maximum upload size in bytes (default 50 MiB).",
+    )
+    import_temp_dir: str = Field(
+        default="data/imports",
+        validation_alias="IMPORT_TEMP_DIR",
+        description="Private directory for temporary upload files (not web-served).",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def sqlalchemy_database_url(self) -> str:
