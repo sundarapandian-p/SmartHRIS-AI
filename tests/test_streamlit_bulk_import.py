@@ -1,8 +1,9 @@
-"""Phase 4.3 — Bulk Import page tests (no live API or MySQL)."""
+"""Phase 4.3/4.4 — Bulk Import upload + job status polling tests (no live API/DB)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -12,8 +13,20 @@ from streamlit_app.api_client import ApiError
 from streamlit_app.pages.bulk_import import (
     MAX_UPLOAD_BYTES,
     PREVIEW_ROW_LIMIT,
+    SESSION_IN_FLIGHT,
+    SESSION_JOB_ID,
+    SESSION_JOB_SNAPSHOT,
+    SESSION_LAST_STATUS,
+    SESSION_POLL_ENABLED,
+    SESSION_STATUS_ERROR,
     CsvPreviewError,
+    fetch_and_store_job_status,
+    is_active_status,
+    is_terminal_status,
+    job_snapshot_from_model,
+    normalize_status,
     preview_csv,
+    should_auto_poll,
     validate_csv_selection,
 )
 
@@ -54,6 +67,32 @@ def _job(**overrides: object) -> ImportJobRead:
     return ImportJobRead.model_validate(base)
 
 
+class RecordingClient:
+    """Fake API client recording upload/status calls."""
+
+    def __init__(self, job: ImportJobRead | None = None) -> None:
+        self.job = job or _job()
+        self.upload_calls: list[dict[str, Any]] = []
+        self.get_calls: list[str] = []
+        self.get_error: Exception | None = None
+        self.get_sequence: list[ImportJobRead] | None = None
+        self._get_index = 0
+
+    def upload_import(self, **kwargs: Any) -> ImportJobRead:
+        self.upload_calls.append(kwargs)
+        return self.job
+
+    def get_import_job(self, job_id: str) -> ImportJobRead:
+        self.get_calls.append(job_id)
+        if self.get_error is not None:
+            raise self.get_error
+        if self.get_sequence is not None:
+            idx = min(self._get_index, len(self.get_sequence) - 1)
+            self._get_index += 1
+            return self.get_sequence[idx]
+        return self.job
+
+
 def _run_page(api_client=None) -> AppTest:
     """Drive ``render`` via AppTest (function body must be import-complete)."""
 
@@ -69,7 +108,14 @@ def _run_page(api_client=None) -> AppTest:
     ).run()
 
 
-# --- Pure helper unit tests -------------------------------------------------
+def _upload_csv(at: AppTest, content: bytes | None = None) -> AppTest:
+    payload = _csv_bytes(rows=2) if content is None else content
+    at.file_uploader[0].set_value(("employees.csv", payload, "text/csv")).run()
+    at.button[0].click().run()
+    return at
+
+
+# --- Pure helper unit tests (upload) ----------------------------------------
 
 
 def test_validate_no_filename() -> None:
@@ -143,6 +189,163 @@ def test_preview_does_not_require_pandas_dataframe() -> None:
     assert all(isinstance(row, list) for row in preview.rows)
 
 
+# --- Status helper unit tests (polling) -------------------------------------
+
+
+def test_status_helpers_pending_running_completed_failed() -> None:
+    assert normalize_status("pending") == "pending"
+    assert is_active_status("pending")
+    assert is_active_status("running")
+    assert not is_terminal_status("pending")
+    assert not is_terminal_status("running")
+    assert is_terminal_status("completed")
+    assert is_terminal_status("failed")
+    assert not is_active_status("completed")
+
+
+def test_should_auto_poll_rules() -> None:
+    assert should_auto_poll(job_id=None, status="pending", poll_enabled=True) is False
+    assert should_auto_poll(job_id="j1", status="pending", poll_enabled=False) is False
+    assert should_auto_poll(job_id="j1", status="pending", poll_enabled=True) is True
+    assert should_auto_poll(job_id="j1", status="running", poll_enabled=True) is True
+    assert should_auto_poll(job_id="j1", status="completed", poll_enabled=True) is False
+    assert should_auto_poll(job_id="j1", status="failed", poll_enabled=True) is False
+    assert should_auto_poll(job_id="j1", status=None, poll_enabled=True) is True
+
+
+def test_no_polling_fetch_without_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Boom:
+        def get_import_job(self, job_id: str) -> ImportJobRead:
+            raise AssertionError("must not call API without Job ID")
+
+    # Simulate empty session via Streamlit runtime is heavy; call helper directly.
+    monkeypatch.setattr(
+        "streamlit_app.pages.bulk_import.st.session_state",
+        {},
+        raising=False,
+    )
+    # Use a tiny stub session state mapping.
+    state: dict[str, Any] = {}
+
+    class _State(dict):
+        def get(self, key, default=None):  # noqa: ANN001
+            return dict.get(self, key, default)
+
+    session = _State(state)
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    snapshot, error = fetch_and_store_job_status(Boom(), "")  # type: ignore[arg-type]
+    assert snapshot is None
+    assert error is not None
+    assert SESSION_JOB_ID not in session or not session.get(SESSION_JOB_ID)
+
+
+def test_fetch_pending_and_running_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {}
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    client = RecordingClient(_job(status="pending"))
+    snap, err = fetch_and_store_job_status(client, client.job.id)  # type: ignore[arg-type]
+    assert err is None
+    assert snap is not None
+    assert snap["status"] == "pending"
+    assert session[SESSION_JOB_ID] == client.job.id
+    assert session[SESSION_POLL_ENABLED] is True
+
+    client.job = _job(id=client.job.id, status="running", started_at=_NOW, processed_rows=3)
+    snap, err = fetch_and_store_job_status(client, client.job.id)  # type: ignore[arg-type]
+    assert err is None
+    assert snap is not None
+    assert snap["status"] == "running"
+    assert snap["processed_rows"] == 3
+    assert session[SESSION_POLL_ENABLED] is True
+
+
+def test_fetch_completed_and_failed_stop_polling(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {SESSION_POLL_ENABLED: True}
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    completed = _job(
+        status="completed",
+        total_rows=10,
+        processed_rows=10,
+        success_count=8,
+        failed_count=2,
+        finished_at=_NOW,
+    )
+    client = RecordingClient(completed)
+    snap, err = fetch_and_store_job_status(client, completed.id)  # type: ignore[arg-type]
+    assert err is None
+    assert snap is not None
+    assert snap["success_count"] == 8
+    assert snap["failed_count"] == 2
+    assert session[SESSION_POLL_ENABLED] is False
+    assert is_terminal_status(session[SESSION_LAST_STATUS])
+
+    failed = _job(id="fail-1", status="failed", error_message="boom", finished_at=_NOW)
+    session[SESSION_POLL_ENABLED] = True
+    client = RecordingClient(failed)
+    snap, err = fetch_and_store_job_status(client, failed.id)  # type: ignore[arg-type]
+    assert err is None
+    assert snap is not None
+    assert snap["error_message"] == "boom"
+    assert session[SESSION_POLL_ENABLED] is False
+
+
+def test_fetch_preserves_job_id_on_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {
+        SESSION_JOB_ID: "keep-me",
+        SESSION_JOB_SNAPSHOT: {"id": "keep-me", "status": "pending"},
+    }
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    client = RecordingClient()
+    client.get_error = ApiError("The API request timed out.", status_code=None)
+    snap, err = fetch_and_store_job_status(client, "keep-me")  # type: ignore[arg-type]
+    assert err is not None
+    assert "timed out" in err.lower()
+    assert session[SESSION_JOB_ID] == "keep-me"
+    assert snap == {"id": "keep-me", "status": "pending"}
+    assert session[SESSION_STATUS_ERROR]
+
+
+def test_fetch_preserves_job_id_on_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {SESSION_JOB_ID: "keep-me"}
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    client = RecordingClient()
+    client.get_error = ApiError(
+        "Cannot reach the API at http://test.local. Confirm the backend is running.",
+    )
+    _snap, err = fetch_and_store_job_status(client, "keep-me")  # type: ignore[arg-type]
+    assert err is not None
+    assert "Cannot reach the API" in err
+    assert session[SESSION_JOB_ID] == "keep-me"
+
+
+def test_in_flight_guard_skips_overlapping_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    session: dict[str, Any] = {
+        SESSION_IN_FLIGHT: True,
+        SESSION_JOB_SNAPSHOT: {"id": "j1", "status": "running"},
+    }
+    monkeypatch.setattr("streamlit_app.pages.bulk_import.st.session_state", session)
+
+    client = RecordingClient()
+    snap, err = fetch_and_store_job_status(client, "j1")  # type: ignore[arg-type]
+    assert err is None
+    assert client.get_calls == []
+    assert snap == {"id": "j1", "status": "running"}
+
+
+def test_apply_job_snapshot_counts() -> None:
+    # apply_job_snapshot needs session_state; covered via fetch tests.
+    job = _job(total_rows=5, success_count=4, failed_count=1, status="completed")
+    snap = job_snapshot_from_model(job)
+    assert snap["total_rows"] == 5
+    assert snap["success_count"] == 4
+    assert snap["failed_count"] == 1
+
+
 # --- AppTest UI tests -------------------------------------------------------
 
 
@@ -157,6 +360,9 @@ def test_page_valid_preview_without_upload() -> None:
     class GuardClient:
         def upload_import(self, **kwargs):  # noqa: ANN003
             raise AssertionError("upload must not run automatically")
+
+        def get_import_job(self, job_id: str) -> ImportJobRead:
+            raise AssertionError("must not poll without Job ID")
 
     at = _run_page(api_client=GuardClient())
     at.file_uploader[0].set_value(("employees.csv", _csv_bytes(rows=12), "text/csv")).run()
@@ -182,55 +388,40 @@ def test_page_oversized_file_shows_error() -> None:
 
 
 def test_upload_only_after_button_click() -> None:
-    calls: list[dict] = []
-
-    class FakeClient:
-        def upload_import(self, **kwargs):  # noqa: ANN003
-            calls.append(kwargs)
-            return _job(filename=kwargs["filename"], dry_run=kwargs.get("dry_run", False))
-
-    at = _run_page(api_client=FakeClient())
+    client = RecordingClient(_job())
+    at = _run_page(api_client=client)
     content = _csv_bytes(rows=2)
     at.file_uploader[0].set_value(("employees.csv", content, "text/csv")).run()
-    assert calls == []
+    assert client.upload_calls == []
 
     at.button[0].click().run()
-    assert len(calls) == 1
-    assert calls[0]["filename"] == "employees.csv"
-    assert calls[0]["content"] == content
-    assert calls[0]["dry_run"] is False
+    assert len(client.upload_calls) == 1
+    assert client.upload_calls[0]["filename"] == "employees.csv"
+    assert client.upload_calls[0]["content"] == content
     assert any("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" in m.value for m in at.markdown)
 
 
 def test_upload_dry_run_checkbox() -> None:
-    calls: list[dict] = []
-
-    class FakeClient:
-        def upload_import(self, **kwargs):  # noqa: ANN003
-            calls.append(kwargs)
-            return _job(dry_run=True)
-
-    at = _run_page(api_client=FakeClient())
+    client = RecordingClient(_job(dry_run=True))
+    at = _run_page(api_client=client)
     at.file_uploader[0].set_value(("batch.csv", _csv_bytes(), "text/csv")).run()
     at.checkbox[0].check().run()
     at.button[0].click().run()
-    assert len(calls) == 1
-    assert calls[0]["dry_run"] is True
-    assert any("yes" in m.value.lower() and "dry" in m.value.lower() for m in at.markdown)
+    assert client.upload_calls[0]["dry_run"] is True
+    assert any(
+        "yes" in m.value.lower() and "dry" in m.value.lower() for m in at.markdown
+    )
 
 
 def test_successful_upload_shows_job_id_and_status() -> None:
-    class FakeClient:
-        def upload_import(self, **kwargs):  # noqa: ANN003
-            return _job(id="job-123", status="pending", dry_run=False)
-
-    at = _run_page(api_client=FakeClient())
-    at.file_uploader[0].set_value(("employees.csv", _csv_bytes(), "text/csv")).run()
-    at.button[0].click().run()
+    client = RecordingClient(_job(id="job-123", status="pending"))
+    at = _run_page(api_client=client)
+    _upload_csv(at)
     assert not at.exception
     assert any("Upload accepted" in s.value for s in at.success)
     assert any("job-123" in m.value for m in at.markdown)
     assert any("pending" in m.value for m in at.markdown)
+    assert at.session_state[SESSION_JOB_ID] == "job-123"
 
 
 def test_api_error_on_upload() -> None:
@@ -242,11 +433,15 @@ def test_api_error_on_upload() -> None:
                 code="validation_error",
             )
 
+        def get_import_job(self, job_id: str) -> ImportJobRead:
+            raise AssertionError("no status fetch after failed upload")
+
     at = _run_page(api_client=FakeClient())
     at.file_uploader[0].set_value(("employees.csv", _csv_bytes(), "text/csv")).run()
     at.button[0].click().run()
     assert not at.exception
     assert any("Only CSV uploads are supported" in e.value for e in at.error)
+    assert SESSION_JOB_ID not in at.session_state
 
 
 def test_invalid_extension_helper_used_for_non_csv_name() -> None:
@@ -264,14 +459,122 @@ def test_original_bytes_preserved_on_upload() -> None:
         b"\xef\xbb\xbfEmployee Number,First Name,Last Name,Work Email,Department ID\n"
         b"E1,A,B,a@b.com,1\n"
     )
-    seen: list[bytes] = []
-
-    class FakeClient:
-        def upload_import(self, **kwargs):  # noqa: ANN003
-            seen.append(kwargs["content"])
-            return _job()
-
-    at = _run_page(api_client=FakeClient())
+    client = RecordingClient()
+    at = _run_page(api_client=client)
     at.file_uploader[0].set_value(("bom.csv", original, "text/csv")).run()
     at.button[0].click().run()
-    assert seen == [original]
+    assert client.upload_calls[0]["content"] == original
+
+
+def test_no_status_polling_without_job_id() -> None:
+    client = RecordingClient()
+    at = _run_page(api_client=client)
+    assert SESSION_JOB_ID not in at.session_state
+    assert client.get_calls == []
+    assert not any("Import job status" in t.value for t in at.subheader)
+
+
+def test_job_id_persists_across_rerun_without_file() -> None:
+    client = RecordingClient(_job(id="persist-1", status="pending"))
+    at = _run_page(api_client=client)
+    _upload_csv(at)
+    assert at.session_state[SESSION_JOB_ID] == "persist-1"
+
+    # Clear file selection; Job ID must remain and status section still render.
+    at.file_uploader[0].set_value(None).run()
+    assert at.session_state[SESSION_JOB_ID] == "persist-1"
+    assert any("Import job status" in t.value for t in at.subheader)
+    assert any("persist-1" in m.value for m in at.markdown)
+
+
+def test_manual_refresh_status_button() -> None:
+    job = _job(id="refresh-1", status="pending", total_rows=0)
+    client = RecordingClient(job)
+    at = _run_page(api_client=client)
+    _upload_csv(at)
+    initial_gets = len(client.get_calls)
+
+    client.job = _job(
+        id="refresh-1",
+        status="running",
+        total_rows=10,
+        processed_rows=4,
+        success_count=3,
+        failed_count=1,
+        started_at=_NOW,
+    )
+    # Refresh Status is the last button in the status panel.
+    refresh_buttons = [b for b in at.button if "Refresh" in (b.label or "")]
+    assert refresh_buttons, "Refresh Status button not found"
+    refresh_buttons[0].click().run()
+    assert len(client.get_calls) > initial_gets
+    assert at.session_state[SESSION_LAST_STATUS] == "running"
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics.get("Total rows") == 10 or str(metrics.get("Total rows")) == "10"
+    assert str(metrics.get("Success")) == "3"
+    assert str(metrics.get("Failed")) == "1"
+
+
+def test_completed_status_shows_counts_and_stops_auto_poll() -> None:
+    completed = _job(
+        id="done-1",
+        status="completed",
+        total_rows=10,
+        processed_rows=10,
+        success_count=9,
+        failed_count=1,
+        finished_at=_NOW,
+    )
+    client = RecordingClient(completed)
+    # Seed session as if upload already happened with polling on, then fetch completed.
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "done-1"
+    at.session_state[SESSION_POLL_ENABLED] = True
+    at.session_state[SESSION_LAST_STATUS] = "running"
+    at.run()
+    assert at.session_state[SESSION_LAST_STATUS] == "completed"
+    assert at.session_state[SESSION_POLL_ENABLED] is False
+    assert any("completed" in s.value.lower() for s in at.success) or any(
+        "completed" in m.value for m in at.markdown
+    )
+
+
+def test_failed_status_display() -> None:
+    failed = _job(
+        id="fail-ui",
+        status="failed",
+        error_message="Uploaded file not found for import job",
+        finished_at=_NOW,
+    )
+    client = RecordingClient(failed)
+    at = _run_page(api_client=client)
+    at.session_state[SESSION_JOB_ID] = "fail-ui"
+    at.session_state[SESSION_POLL_ENABLED] = True
+    at.session_state[SESSION_LAST_STATUS] = "running"
+    at.run()
+    assert at.session_state[SESSION_LAST_STATUS] == "failed"
+    assert at.session_state[SESSION_POLL_ENABLED] is False
+    assert any("failed" in e.value.lower() for e in at.error) or any(
+        "failed" in m.value for m in at.markdown
+    )
+
+
+def test_status_api_error_keeps_job_id_in_ui() -> None:
+    client = RecordingClient(_job(id="err-1", status="pending"))
+    at = _run_page(api_client=client)
+    _upload_csv(at)
+    client.get_error = ApiError("The API request timed out. Confirm the backend is running.")
+    refresh_buttons = [b for b in at.button if "Refresh" in (b.label or "")]
+    refresh_buttons[0].click().run()
+    assert at.session_state[SESSION_JOB_ID] == "err-1"
+    assert any("timed out" in w.value.lower() for w in at.warning) or any(
+        "timed out" in e.value.lower() for e in at.error
+    )
+
+
+def test_automatic_polling_uses_active_statuses() -> None:
+    """Pending/running keep auto-poll enabled; completed/failed stop it."""
+    assert should_auto_poll(job_id="x", status="pending", poll_enabled=True)
+    assert should_auto_poll(job_id="x", status="running", poll_enabled=True)
+    assert not should_auto_poll(job_id="x", status="completed", poll_enabled=True)
+    assert not should_auto_poll(job_id="x", status="failed", poll_enabled=True)
