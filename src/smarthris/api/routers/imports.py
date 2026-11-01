@@ -54,6 +54,28 @@ def get_import_job(
     return service.get_job(job_id)
 
 
+@router.post("/{job_id}/retry", response_model=ImportJobRead, status_code=201)
+def retry_import(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    service: ImportUploadService = Depends(get_import_upload_service),
+) -> ImportJobRead:
+    """
+    Create a child ImportJob that reprocesses the parent's stored CSV.
+
+    Schedules background processing only after the child row is committed.
+    """
+    result = service.create_retry(job_id)
+    background_tasks.add_task(
+        process_import_job,
+        result.id,
+        session_factory=request.app.state.db_session_factory,
+        settings=request.app.state.settings,
+    )
+    return result
+
+
 @router.get("/{job_id}/errors", response_model=ImportErrorListResponse)
 def list_import_errors(
     job_id: str,

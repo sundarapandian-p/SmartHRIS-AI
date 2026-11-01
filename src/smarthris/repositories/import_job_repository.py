@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from smarthris.models.import_job import ImportFileType, ImportJob, ImportJobStatus
 
+_ACTIVE_RETRY_STATUSES = (ImportJobStatus.PENDING, ImportJobStatus.RUNNING)
+
 
 class ImportJobRepository:
     def __init__(self, session: Session) -> None:
@@ -20,6 +22,7 @@ class ImportJobRepository:
         file_type: ImportFileType,
         dry_run: bool = False,
         job_id: str | None = None,
+        parent_job_id: str | None = None,
     ) -> ImportJob:
         job = ImportJob(
             id=job_id or str(uuid4()),
@@ -27,6 +30,7 @@ class ImportJobRepository:
             file_type=file_type,
             dry_run=dry_run,
             status=ImportJobStatus.PENDING,
+            parent_job_id=parent_job_id,
         )
         self._session.add(job)
         self._session.flush()
@@ -34,6 +38,28 @@ class ImportJobRepository:
 
     def get_by_id(self, job_id: str) -> ImportJob | None:
         return self._session.get(ImportJob, job_id)
+
+    def get_by_id_for_update(self, job_id: str) -> ImportJob | None:
+        """Load a job row with SELECT ... FOR UPDATE (caller owns the transaction)."""
+        query = select(ImportJob).where(ImportJob.id == job_id).with_for_update()
+        return self._session.scalars(query).one_or_none()
+
+    def find_active_child_id_for_update(self, parent_job_id: str) -> str | None:
+        """
+        Return an id of a pending/running child, locking matching rows.
+
+        Used inside the same transaction as parent FOR UPDATE + child create.
+        """
+        query = (
+            select(ImportJob.id)
+            .where(
+                ImportJob.parent_job_id == parent_job_id,
+                ImportJob.status.in_(_ACTIVE_RETRY_STATUSES),
+            )
+            .with_for_update()
+            .limit(1)
+        )
+        return self._session.scalars(query).first()
 
     def mark_running(self, job: ImportJob) -> ImportJob:
         job.status = ImportJobStatus.RUNNING

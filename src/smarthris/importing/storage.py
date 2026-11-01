@@ -58,6 +58,48 @@ def delete_import_file(path: Path) -> None:
         pass
 
 
+def copy_import_file(
+    source: Path,
+    destination: Path,
+    *,
+    chunk_size: int = CHUNK_SIZE,
+) -> int:
+    """
+    Stream-copy ``source`` to ``destination`` with exclusive create.
+
+    Never moves or overwrites. Deletes a partial destination on failure.
+    Returns bytes written.
+    """
+    if not source.is_file():
+        raise StorageError("Source import file not found")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    bytes_written = 0
+    try:
+        # Exclusive create: fail if the destination already exists.
+        with source.open("rb") as src, destination.open("xb") as dest:
+            while True:
+                chunk = src.read(chunk_size)
+                if not chunk:
+                    break
+                dest.write(chunk)
+                bytes_written += len(chunk)
+    except FileExistsError as exc:
+        raise StorageError("Destination import file already exists") from exc
+    except OSError as exc:
+        delete_import_file(destination)
+        raise StorageError("Failed to copy import file") from exc
+    except Exception:
+        delete_import_file(destination)
+        raise
+
+    if bytes_written == 0:
+        delete_import_file(destination)
+        raise StorageError("Source import file is empty")
+
+    return bytes_written
+
+
 def save_upload_stream(
     *,
     source: BinaryIO,

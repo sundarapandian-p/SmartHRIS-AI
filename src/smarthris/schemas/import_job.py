@@ -22,6 +22,7 @@ class ImportJobRead(BaseModel):
     success_count: int
     failed_count: int
     error_message: str | None
+    parent_job_id: str | None = None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
