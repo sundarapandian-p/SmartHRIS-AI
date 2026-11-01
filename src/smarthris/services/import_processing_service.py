@@ -1,16 +1,21 @@
-"""Background validation of uploaded import jobs (no employee inserts)."""
+"""Background validation and batch insertion of uploaded import jobs."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from smarthris.config import Settings
 from smarthris.importing.parsers.csv_parser import CsvParseError, parse_csv
 from smarthris.importing.storage import import_storage_path
-from smarthris.importing.validation.row_validator import ImportRowValidator
+from smarthris.importing.validation.row_validator import (
+    ImportRowValidator,
+    ValidatedImportRow,
+)
+from smarthris.models.employee import Employee
 from smarthris.models.import_job import ImportJobStatus
 from smarthris.repositories.department_repository import DepartmentRepository
 from smarthris.repositories.employee_repository import EmployeeRepository
@@ -29,12 +34,28 @@ def _sanitize_error_message(message: str) -> str:
     return text
 
 
+def _employee_from_validated(item: ValidatedImportRow) -> Employee:
+    row = item.row
+    return Employee(
+        employee_number=row.employee_number,
+        first_name=row.first_name,
+        last_name=row.last_name,
+        work_email=str(row.work_email).lower(),
+        department_id=item.resolved_department_id,
+        job_role=row.job_role,
+        job_title=row.job_title,
+        manager_employee_id=None,
+        hire_date=row.hire_date,
+        status=row.status,
+    )
+
+
 class ImportProcessingService:
     """
-    Validate-only processor for one ImportJob.
+    Validate uploaded CSV rows and insert valid employees in batches.
 
     Uses an independent SQLAlchemy session from ``session_factory``.
-    Never inserts employees and never persists ImportError rows (Phase 3.6).
+    Does not persist ImportError rows (Phase 3.6).
     """
 
     def __init__(
@@ -75,6 +96,13 @@ class ImportProcessingService:
             session.rollback()
             raise
 
+        # Re-read after commit so dry_run and identity stay attached to this session.
+        job = jobs.get_by_id(job_id)
+        if job is None:
+            logger.error("Import job %s disappeared after mark_running", job_id)
+            return
+        dry_run = bool(job.dry_run)
+
         csv_path = import_storage_path(self._settings.import_temp_dir, job_id)
         if not csv_path.is_file():
             self._mark_failed_safe(
@@ -88,20 +116,46 @@ class ImportProcessingService:
             total_rows = 0
             success_count = 0
             failed_count = 0
+            buffer: list[ValidatedImportRow] = []
+            batch_size = self._settings.import_batch_size
+            employees_repo = EmployeeRepository(session)
 
             validator = ImportRowValidator(
                 department_repository=DepartmentRepository(session),
-                employee_repository=EmployeeRepository(session),
-                batch_size=self._settings.import_batch_size,
+                employee_repository=employees_repo,
+                batch_size=batch_size,
             )
             for result in validator.validate(parse_csv(csv_path)):
                 total_rows += 1
-                if result.is_valid:
-                    success_count += 1
-                else:
+                if not result.is_valid or result.validated is None:
                     failed_count += 1
+                    continue
 
-            # Re-load in case identity expired across commits (none yet mid-loop).
+                if dry_run:
+                    success_count += 1
+                    continue
+
+                buffer.append(result.validated)
+                if len(buffer) >= batch_size:
+                    inserted, failed = self._flush_insert_buffer(
+                        session,
+                        employees_repo,
+                        buffer,
+                    )
+                    success_count += inserted
+                    failed_count += failed
+                    buffer.clear()
+
+            if buffer:
+                inserted, failed = self._flush_insert_buffer(
+                    session,
+                    employees_repo,
+                    buffer,
+                )
+                success_count += inserted
+                failed_count += failed
+                buffer.clear()
+
             job = jobs.get_by_id(job_id)
             if job is None:
                 logger.error("Import job %s disappeared during processing", job_id)
@@ -135,6 +189,60 @@ class ImportProcessingService:
                 job_id,
                 _sanitize_error_message(f"Import processing failed: {exc}"),
             )
+
+    def _flush_insert_buffer(
+        self,
+        session: Session,
+        employees_repo: EmployeeRepository,
+        buffer: Sequence[ValidatedImportRow],
+    ) -> tuple[int, int]:
+        """
+        Insert one batch. Returns (success_count, failed_count).
+
+        On IntegrityError, rolls back the batch and retries each row with a savepoint.
+        Previously committed batches are unaffected.
+        """
+        if not buffer:
+            return 0, 0
+
+        employees = [_employee_from_validated(item) for item in buffer]
+        try:
+            employees_repo.add_many(employees)
+            session.flush()
+            session.commit()
+            return len(employees), 0
+        except IntegrityError:
+            logger.info(
+                "Batch insert hit IntegrityError for %s rows; retrying individually",
+                len(buffer),
+            )
+            session.rollback()
+            return self._insert_rows_individually(session, employees_repo, buffer)
+
+    def _insert_rows_individually(
+        self,
+        session: Session,
+        employees_repo: EmployeeRepository,
+        buffer: Sequence[ValidatedImportRow],
+    ) -> tuple[int, int]:
+        """
+        Insert each row in its own short transaction after a failed batch.
+
+        Uses flush+commit per row (with rollback on conflict) so the session
+        stays usable and earlier successful rows in this retry remain kept.
+        """
+        inserted = 0
+        failed = 0
+        for item in buffer:
+            try:
+                employees_repo.add(_employee_from_validated(item))
+                session.flush()
+                session.commit()
+                inserted += 1
+            except IntegrityError:
+                session.rollback()
+                failed += 1
+        return inserted, failed
 
     def _mark_failed_safe(self, session: Session, job_id: str, error_message: str) -> None:
         """Best-effort failed transition; may open a fresh session if needed."""
@@ -173,5 +281,5 @@ def process_import_job(
     session_factory: Callable[[], Session] | sessionmaker[Session],
     settings: Settings,
 ) -> None:
-    """BackgroundTasks entrypoint: validate an uploaded import job."""
+    """BackgroundTasks entrypoint: validate and insert an uploaded import job."""
     ImportProcessingService(session_factory, settings).process(job_id)

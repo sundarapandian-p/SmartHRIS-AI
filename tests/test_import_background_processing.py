@@ -243,35 +243,32 @@ def test_status_guard_skips_non_pending(
     assert second.processed_rows == 1
 
 
-def test_dry_run_true_and_false_validate_only(
+def test_dry_run_true_does_not_insert(
     db_session: Session,
     tracking_factory: _TrackingSessionFactory,
     import_settings: Settings,
     sample_department,
 ) -> None:
     before = int(db_session.scalar(select(func.count()).select_from(Employee)) or 0)
-
-    for dry_run in (True, False):
-        jobs = ImportJobRepository(db_session)
-        job = jobs.create(
-            filename=f"dry-{dry_run}.csv",
-            file_type=ImportFileType.CSV,
-            dry_run=dry_run,
-        )
-        db_session.flush()
-        _write_csv(
-            import_storage_path(import_settings.import_temp_dir, job.id),
-            _valid_csv_body(
-                f"E-{dry_run},Ada,Lovelace,dry-{dry_run}@example.com,{sample_department.id}",
-            ),
-        )
-        ImportProcessingService(tracking_factory, import_settings).process(job.id)
-        loaded = jobs.get_by_id(job.id)
-        assert loaded is not None
-        assert loaded.status == ImportJobStatus.COMPLETED
-        assert loaded.dry_run is dry_run
-        assert loaded.success_count == 1
-
+    jobs = ImportJobRepository(db_session)
+    job = jobs.create(
+        filename="dry-true.csv",
+        file_type=ImportFileType.CSV,
+        dry_run=True,
+    )
+    db_session.flush()
+    _write_csv(
+        import_storage_path(import_settings.import_temp_dir, job.id),
+        _valid_csv_body(
+            f"E-DRY,Ada,Lovelace,dry-true@example.com,{sample_department.id}",
+        ),
+    )
+    ImportProcessingService(tracking_factory, import_settings).process(job.id)
+    loaded = jobs.get_by_id(job.id)
+    assert loaded is not None
+    assert loaded.status == ImportJobStatus.COMPLETED
+    assert loaded.dry_run is True
+    assert loaded.success_count == 1
     after = int(db_session.scalar(select(func.count()).select_from(Employee)) or 0)
     assert after == before
 

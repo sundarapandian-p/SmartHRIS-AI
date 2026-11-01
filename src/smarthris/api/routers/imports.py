@@ -33,7 +33,7 @@ def upload_import(
 ) -> ImportJobRead:
     """
     Accept a CSV upload, store it privately, create a pending ImportJob,
-    then schedule background validation (no employee inserts).
+    then schedule background validation and insertion (respects dry_run).
     """
     result = service.create_from_upload(upload=file, dry_run=dry_run)
     background_tasks.add_task(

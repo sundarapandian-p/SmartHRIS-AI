@@ -96,6 +96,12 @@ class EmployeeRepository:
         self._session.add(employee)
         return employee
 
+    def add_many(self, employees: Sequence[Employee]) -> None:
+        """Stage multiple employees for insert (caller flushes/commits)."""
+        if not employees:
+            return
+        self._session.add_all(list(employees))
+
     def find_existing_employee_numbers(self, numbers: Sequence[str]) -> set[str]:
         """
         Return employee_number values that already exist in the database.
