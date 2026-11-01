@@ -23,3 +23,13 @@ class ConflictError(AppError):
 class ValidationError(AppError):
     def __init__(self, message: str) -> None:
         super().__init__(message, code="validation_error")
+
+
+class PayloadTooLargeError(AppError):
+    def __init__(self, message: str = "Uploaded file exceeds the maximum allowed size") -> None:
+        super().__init__(message, code="payload_too_large")
+
+
+class StorageError(AppError):
+    def __init__(self, message: str = "Failed to store uploaded file") -> None:
+        super().__init__(message, code="storage_error")

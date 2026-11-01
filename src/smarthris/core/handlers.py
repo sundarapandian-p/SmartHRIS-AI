@@ -4,7 +4,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
-from smarthris.core.exceptions import AppError, ConflictError, NotFoundError, ValidationError
+from smarthris.core.exceptions import (
+    AppError,
+    ConflictError,
+    NotFoundError,
+    PayloadTooLargeError,
+    StorageError,
+    ValidationError,
+)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -21,6 +28,23 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def conflict_handler(_request: Request, exc: ConflictError) -> JSONResponse:
         return JSONResponse(
             status_code=409,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(PayloadTooLargeError)
+    async def payload_too_large_handler(
+        _request: Request,
+        exc: PayloadTooLargeError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(StorageError)
+    async def storage_error_handler(_request: Request, exc: StorageError) -> JSONResponse:
+        return JSONResponse(
+            status_code=500,
             content={"detail": exc.message, "code": exc.code},
         )
 

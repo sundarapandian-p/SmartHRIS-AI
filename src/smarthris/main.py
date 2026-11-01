@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from smarthris.api.routers import employees, health
+from smarthris.api.routers import employees, health, imports
 from smarthris.config import Settings, get_settings
 from smarthris.core.handlers import register_exception_handlers
 from smarthris.db.session import create_db_engine, create_session_factory
@@ -20,6 +20,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """Create shared resources at startup and dispose them on shutdown."""
         engine = create_db_engine(cfg)
+        app.state.settings = cfg
         app.state.db_engine = engine
         app.state.db_session_factory = create_session_factory(engine)
         yield
@@ -33,6 +34,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(employees.router)
+    app.include_router(imports.router)
     return app
 
 
