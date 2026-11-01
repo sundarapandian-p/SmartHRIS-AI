@@ -1,10 +1,12 @@
 """Data access for employees."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
+from smarthris.config import get_settings
 from smarthris.models.employee import Employee, EmployeeStatus
 from smarthris.schemas.employee import EmployeeSortField, SortOrder
 
@@ -53,6 +55,30 @@ class DescendantRow:
     depth: int
 
 
+def _unique_trimmed(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in values:
+        value = raw.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def _unique_lower_emails(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in values:
+        value = raw.strip().lower()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
 class EmployeeRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -69,6 +95,46 @@ class EmployeeRepository:
     def add(self, employee: Employee) -> Employee:
         self._session.add(employee)
         return employee
+
+    def find_existing_employee_numbers(self, numbers: Sequence[str]) -> set[str]:
+        """
+        Return employee_number values that already exist in the database.
+
+        Queries in chunks of ``import_batch_size``; does not load Employee ORM rows.
+        """
+        unique_numbers = _unique_trimmed(numbers)
+        if not unique_numbers:
+            return set()
+
+        batch_size = get_settings().import_batch_size
+        found: set[str] = set()
+        for start in range(0, len(unique_numbers), batch_size):
+            chunk = unique_numbers[start : start + batch_size]
+            rows = self._session.scalars(
+                select(Employee.employee_number).where(Employee.employee_number.in_(chunk))
+            ).all()
+            found.update(rows)
+        return found
+
+    def find_existing_work_emails(self, emails: Sequence[str]) -> set[str]:
+        """
+        Return work_email values that already exist (compared lowercase).
+
+        Queries in chunks of ``import_batch_size``; does not load Employee ORM rows.
+        """
+        unique_emails = _unique_lower_emails(emails)
+        if not unique_emails:
+            return set()
+
+        batch_size = get_settings().import_batch_size
+        found: set[str] = set()
+        for start in range(0, len(unique_emails), batch_size):
+            chunk = unique_emails[start : start + batch_size]
+            rows = self._session.scalars(
+                select(Employee.work_email).where(Employee.work_email.in_(chunk))
+            ).all()
+            found.update(str(email).lower() for email in rows)
+        return found
 
     def _apply_filters(self, query, filters: EmployeeFilters):
         if filters.employee_number:
