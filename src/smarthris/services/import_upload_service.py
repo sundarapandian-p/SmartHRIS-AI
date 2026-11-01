@@ -72,6 +72,13 @@ class ImportUploadService:
             delete_import_file(destination)
             raise
 
+    def get_job(self, job_id: str) -> ImportJobRead:
+        """Return current ImportJob details without modifying the job."""
+        job = self._jobs.get_by_id(job_id)
+        if job is None:
+            raise NotFoundError("Import job not found")
+        return ImportJobRead.model_validate(job)
+
     def list_errors(
         self,
         job_id: str,

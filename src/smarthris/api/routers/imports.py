@@ -45,6 +45,15 @@ def upload_import(
     return result
 
 
+@router.get("/{job_id}", response_model=ImportJobRead)
+def get_import_job(
+    job_id: str,
+    service: ImportUploadService = Depends(get_import_upload_service),
+) -> ImportJobRead:
+    """Return current import job status and counters (read-only)."""
+    return service.get_job(job_id)
+
+
 @router.get("/{job_id}/errors", response_model=ImportErrorListResponse)
 def list_import_errors(
     job_id: str,
