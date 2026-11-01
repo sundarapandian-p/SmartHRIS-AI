@@ -12,6 +12,8 @@ dist/
 build/
 data/indexes/
 data/imports/
+data/performance/
 *.log
+*.perf.json
 .idea/
 .vscode/

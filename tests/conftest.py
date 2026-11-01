@@ -9,8 +9,24 @@ from smarthris.config import Settings, get_settings
 from smarthris.db.base import Base
 from smarthris.db.session import create_db_engine, create_session_factory, verify_database_connection
 from smarthris.main import create_app
+from smarthris.performance.gate import PERFORMANCE_ENV_VAR, performance_runs_enabled
 from smarthris.repositories.department_repository import DepartmentRepository
 from tests.test_db_guard import assert_safe_integration_database_url
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip ``performance``-marked tests unless SMART_HRIS_RUN_PERFORMANCE=1."""
+    if performance_runs_enabled():
+        return
+    skip_perf = pytest.mark.skip(
+        reason=(
+            f"Performance benchmarks are opt-in; set {PERFORMANCE_ENV_VAR}=1 "
+            "with an approved MySQL test/bench database."
+        )
+    )
+    for item in items:
+        if item.get_closest_marker("performance") is not None:
+            item.add_marker(skip_perf)
 
 
 @pytest.fixture

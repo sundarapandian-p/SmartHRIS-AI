@@ -40,6 +40,9 @@ pythonpath = ["src"]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+markers = [
+    "performance: large import benchmarks; skipped unless SMART_HRIS_RUN_PERFORMANCE=1",
+]
 
 [tool.ruff]
 line-length = 100
