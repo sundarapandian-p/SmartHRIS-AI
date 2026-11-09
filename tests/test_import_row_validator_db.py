@@ -98,12 +98,18 @@ def test_find_existing_chunks_over_batch_size(
     )
     repo = EmployeeRepository(db_session)
     execute_calls = {"n": 0}
+    original_execute = db_session.execute
     original_scalars = db_session.scalars
+
+    def counting_execute(*args, **kwargs):
+        execute_calls["n"] += 1
+        return original_execute(*args, **kwargs)
 
     def counting_scalars(*args, **kwargs):
         execute_calls["n"] += 1
         return original_scalars(*args, **kwargs)
 
+    monkeypatch.setattr(db_session, "execute", counting_execute)
     monkeypatch.setattr(db_session, "scalars", counting_scalars)
 
     numbers = [f"E-{i}" for i in range(25)] + ["E-500"]

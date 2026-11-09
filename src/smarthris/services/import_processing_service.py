@@ -429,7 +429,7 @@ def process_import_job(
 
     EMPLOYEES → employee processor (unchanged).
     COURSES → course processor.
-    ENROLMENTS → mark failed (not implemented yet).
+    ENROLMENTS → enrolment processor.
     """
     session = session_factory()
     try:
@@ -454,11 +454,11 @@ def process_import_job(
         return
 
     if target is ImportTarget.ENROLMENTS:
-        _fail_unsupported_target(
-            session_factory,
-            job_id,
-            "Enrolment import processing is not implemented yet",
+        from smarthris.services.enrolment_import_processing_service import (
+            EnrolmentImportProcessingService,
         )
+
+        EnrolmentImportProcessingService(session_factory, settings).process(job_id)
         return
 
     _fail_unsupported_target(

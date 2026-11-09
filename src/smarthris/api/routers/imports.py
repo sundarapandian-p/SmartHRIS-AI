@@ -1,4 +1,4 @@
-"""Bulk import upload and error query routes (employees and courses)."""
+"""Bulk import upload and error query routes (employees, courses, enrolments)."""
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.orm import Session
@@ -71,6 +71,27 @@ def upload_course_import(
     then schedule background course validation and insertion.
     """
     result = service.create_course_from_upload(upload=file, dry_run=dry_run)
+    _schedule_import(
+        background_tasks=background_tasks,
+        request=request,
+        job_id=result.id,
+    )
+    return result
+
+
+@router.post("/enrolments", response_model=ImportJobRead, status_code=201)
+def upload_enrolment_import(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    file: UploadFile = File(...),
+    dry_run: bool = Form(False),
+    service: ImportUploadService = Depends(get_import_upload_service),
+) -> ImportJobRead:
+    """
+    Accept an enrolment CSV upload, create an ENROLMENTS-targeted ImportJob,
+    then schedule background enrolment validation and insertion.
+    """
+    result = service.create_enrolment_from_upload(upload=file, dry_run=dry_run)
     _schedule_import(
         background_tasks=background_tasks,
         request=request,

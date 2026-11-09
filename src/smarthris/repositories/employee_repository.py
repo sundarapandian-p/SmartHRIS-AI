@@ -108,19 +108,28 @@ class EmployeeRepository:
 
         Queries in chunks of ``import_batch_size``; does not load Employee ORM rows.
         """
+        return set(self.map_employee_numbers_to_ids(numbers))
+
+    def map_employee_numbers_to_ids(self, numbers: Sequence[str]) -> dict[str, int]:
+        """
+        Return ``employee_number → id`` for numbers that exist (chunked lookups).
+        """
         unique_numbers = _unique_trimmed(numbers)
         if not unique_numbers:
-            return set()
+            return {}
 
         batch_size = get_settings().import_batch_size
-        found: set[str] = set()
+        mapping: dict[str, int] = {}
         for start in range(0, len(unique_numbers), batch_size):
             chunk = unique_numbers[start : start + batch_size]
-            rows = self._session.scalars(
-                select(Employee.employee_number).where(Employee.employee_number.in_(chunk))
+            rows = self._session.execute(
+                select(Employee.employee_number, Employee.id).where(
+                    Employee.employee_number.in_(chunk)
+                )
             ).all()
-            found.update(rows)
-        return found
+            for employee_number, employee_id in rows:
+                mapping[str(employee_number)] = int(employee_id)
+        return mapping
 
     def find_existing_work_emails(self, emails: Sequence[str]) -> set[str]:
         """

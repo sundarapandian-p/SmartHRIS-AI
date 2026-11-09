@@ -39,8 +39,10 @@ def test_import_error_codes_are_stable() -> None:
     assert ImportErrorCode.ALREADY_EXISTS == "already_exists"
     assert ImportErrorCode.UNKNOWN_DEPARTMENT == "unknown_department"
     assert ImportErrorCode.DEPARTMENT_MISMATCH == "department_mismatch"
+    assert ImportErrorCode.UNKNOWN_EMPLOYEE == "unknown_employee"
+    assert ImportErrorCode.UNKNOWN_COURSE == "unknown_course"
     assert ImportErrorCode.INVALID_VALUE == "invalid_value"
-    assert len(ImportErrorCode) == 9
+    assert len(ImportErrorCode) == 11
 
 
 # --- column mapping ----------------------------------------------------------

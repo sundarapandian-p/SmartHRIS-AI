@@ -12,4 +12,6 @@ class ImportErrorCode(StrEnum):
     ALREADY_EXISTS = "already_exists"
     UNKNOWN_DEPARTMENT = "unknown_department"
     DEPARTMENT_MISMATCH = "department_mismatch"
+    UNKNOWN_EMPLOYEE = "unknown_employee"
+    UNKNOWN_COURSE = "unknown_course"
     INVALID_VALUE = "invalid_value"

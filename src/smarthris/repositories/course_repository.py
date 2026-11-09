@@ -36,19 +36,24 @@ class CourseRepository:
 
     def find_existing_course_codes(self, codes: Sequence[str]) -> set[str]:
         """Return course_code values that already exist (chunked lookups)."""
+        return set(self.map_course_codes_to_ids(codes))
+
+    def map_course_codes_to_ids(self, codes: Sequence[str]) -> dict[str, int]:
+        """Return ``course_code → id`` for codes that exist (chunked lookups)."""
         unique_codes = _unique_trimmed(codes)
         if not unique_codes:
-            return set()
+            return {}
 
         batch_size = get_settings().import_batch_size
-        found: set[str] = set()
+        mapping: dict[str, int] = {}
         for start in range(0, len(unique_codes), batch_size):
             chunk = unique_codes[start : start + batch_size]
-            rows = self._session.scalars(
-                select(Course.course_code).where(Course.course_code.in_(chunk))
+            rows = self._session.execute(
+                select(Course.course_code, Course.id).where(Course.course_code.in_(chunk))
             ).all()
-            found.update(rows)
-        return found
+            for course_code, course_id in rows:
+                mapping[str(course_code)] = int(course_id)
+        return mapping
 
     def count(self) -> int:
         from sqlalchemy import func

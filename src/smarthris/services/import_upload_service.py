@@ -85,6 +85,19 @@ class ImportUploadService:
             import_target=ImportTarget.COURSES,
         )
 
+    def create_enrolment_from_upload(
+        self,
+        *,
+        upload: UploadFile,
+        dry_run: bool = False,
+    ) -> ImportJobRead:
+        """Create a pending enrolment import job from an uploaded CSV."""
+        return self._create_upload_job(
+            upload=upload,
+            dry_run=dry_run,
+            import_target=ImportTarget.ENROLMENTS,
+        )
+
     def _create_upload_job(
         self,
         *,

@@ -395,6 +395,9 @@ def test_dispatch_employees_courses_enrolments(
         patch(
             "smarthris.services.course_import_processing_service.CourseImportProcessingService.process"
         ) as course_process,
+        patch(
+            "smarthris.services.enrolment_import_processing_service.EnrolmentImportProcessingService.process"
+        ) as enrolment_process,
     ):
         process_import_job(
             employee_job.id,
@@ -403,6 +406,7 @@ def test_dispatch_employees_courses_enrolments(
         )
         emp_process.assert_called_once()
         course_process.assert_not_called()
+        enrolment_process.assert_not_called()
 
         emp_process.reset_mock()
         process_import_job(
@@ -412,14 +416,14 @@ def test_dispatch_employees_courses_enrolments(
         )
         course_process.assert_called_once()
         emp_process.assert_not_called()
+        enrolment_process.assert_not_called()
 
-    process_import_job(
-        enrolment_job.id,
-        session_factory=factory,
-        settings=course_import_settings,
-    )
-    db_session.expire_all()
-    failed = jobs.get_by_id(enrolment_job.id)
-    assert failed is not None
-    assert failed.status is ImportJobStatus.FAILED
-    assert "not implemented" in (failed.error_message or "").lower()
+        course_process.reset_mock()
+        process_import_job(
+            enrolment_job.id,
+            session_factory=factory,
+            settings=course_import_settings,
+        )
+        enrolment_process.assert_called_once()
+        emp_process.assert_not_called()
+        course_process.assert_not_called()
