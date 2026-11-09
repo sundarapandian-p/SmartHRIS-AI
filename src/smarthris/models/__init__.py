@@ -7,7 +7,12 @@ from smarthris.models.employee import Employee, EmployeeStatus
 from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
 from smarthris.models.hr_document_chunk import HrDocumentChunk
 from smarthris.models.import_error import ImportError
-from smarthris.models.import_job import ImportFileType, ImportJob, ImportJobStatus
+from smarthris.models.import_job import (
+    ImportFileType,
+    ImportJob,
+    ImportJobStatus,
+    ImportTarget,
+)
 
 __all__ = [
     "Course",
@@ -25,4 +30,5 @@ __all__ = [
     "ImportFileType",
     "ImportJob",
     "ImportJobStatus",
+    "ImportTarget",
 ]

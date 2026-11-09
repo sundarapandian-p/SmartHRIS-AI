@@ -18,12 +18,14 @@ class ImportErrorRepository:
         code: str,
         message: str,
         employee_number: str | None = None,
+        record_key: str | None = None,
         field: str | None = None,
     ) -> ImportError:
         row = ImportError(
             import_job_id=import_job_id,
             row_number=row_number,
             employee_number=employee_number,
+            record_key=record_key,
             field=field,
             code=code,
             message=message,

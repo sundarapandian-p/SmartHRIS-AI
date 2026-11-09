@@ -6,7 +6,12 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from smarthris.models.import_job import ImportFileType, ImportJob, ImportJobStatus
+from smarthris.models.import_job import (
+    ImportFileType,
+    ImportJob,
+    ImportJobStatus,
+    ImportTarget,
+)
 
 _ACTIVE_RETRY_STATUSES = (ImportJobStatus.PENDING, ImportJobStatus.RUNNING)
 
@@ -23,6 +28,7 @@ class ImportJobRepository:
         dry_run: bool = False,
         job_id: str | None = None,
         parent_job_id: str | None = None,
+        import_target: ImportTarget = ImportTarget.EMPLOYEES,
     ) -> ImportJob:
         job = ImportJob(
             id=job_id or str(uuid4()),
@@ -30,6 +36,7 @@ class ImportJobRepository:
             file_type=file_type,
             dry_run=dry_run,
             status=ImportJobStatus.PENDING,
+            import_target=import_target,
             parent_job_id=parent_job_id,
         )
         self._session.add(job)

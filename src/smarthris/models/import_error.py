@@ -27,6 +27,11 @@ class ImportError(Base):
     )
     row_number: Mapped[int] = mapped_column(Integer, nullable=False)
     employee_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    record_key: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        doc="Business key for non-employee imports (e.g. course_code).",
+    )
     field: Mapped[str | None] = mapped_column(String(100), nullable=True)
     code: Mapped[str] = mapped_column(String(64), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)

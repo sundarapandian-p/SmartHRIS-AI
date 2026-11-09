@@ -1,4 +1,4 @@
-"""Bulk employee import job ORM model."""
+"""Bulk import job ORM model (employees, courses, enrolments)."""
 
 from __future__ import annotations
 
@@ -28,8 +28,16 @@ class ImportJobStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ImportTarget(str, enum.Enum):
+    """Which domain an import job processes."""
+
+    EMPLOYEES = "employees"
+    COURSES = "courses"
+    ENROLMENTS = "enrolments"
+
+
 class ImportJob(Base):
-    """Tracks one uploaded employee import file and aggregate results."""
+    """Tracks one uploaded import file and aggregate results."""
 
     __tablename__ = "import_jobs"
 
@@ -43,6 +51,13 @@ class ImportJob(Base):
         nullable=False,
         default=ImportJobStatus.PENDING,
         server_default=ImportJobStatus.PENDING.value,
+        index=True,
+    )
+    import_target: Mapped[ImportTarget] = mapped_column(
+        Enum(ImportTarget, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=ImportTarget.EMPLOYEES,
+        server_default=ImportTarget.EMPLOYEES.value,
         index=True,
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)

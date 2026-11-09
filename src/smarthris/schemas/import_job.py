@@ -1,10 +1,10 @@
-"""API schemas for bulk employee import jobs."""
+"""API schemas for bulk import jobs."""
 
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from smarthris.models.import_job import ImportFileType, ImportJobStatus
+from smarthris.models.import_job import ImportFileType, ImportJobStatus, ImportTarget
 
 
 class ImportJobRead(BaseModel):
@@ -14,6 +14,7 @@ class ImportJobRead(BaseModel):
 
     id: str
     status: ImportJobStatus
+    import_target: ImportTarget = ImportTarget.EMPLOYEES
     filename: str
     file_type: ImportFileType
     dry_run: bool
@@ -36,6 +37,7 @@ class ImportErrorRead(BaseModel):
     id: int
     row_number: int
     employee_number: str | None
+    record_key: str | None = None
     field: str | None
     code: str
     message: str

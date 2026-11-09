@@ -26,7 +26,12 @@ from smarthris.importing.storage import (
     sanitize_original_filename,
     save_upload_stream,
 )
-from smarthris.models.import_job import ImportFileType, ImportJob, ImportJobStatus
+from smarthris.models.import_job import (
+    ImportFileType,
+    ImportJob,
+    ImportJobStatus,
+    ImportTarget,
+)
 from smarthris.repositories.import_error_repository import ImportErrorRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
 from smarthris.schemas.import_job import ImportErrorListResponse, ImportErrorRead, ImportJobRead
@@ -85,6 +90,7 @@ class ImportUploadService:
                 file_type=ImportFileType.CSV,
                 dry_run=dry_run,
                 job_id=job_id,
+                import_target=ImportTarget.EMPLOYEES,
             )
             self._session.commit()
             self._session.refresh(job)
@@ -108,6 +114,7 @@ class ImportUploadService:
         parent_id = parent.id
         filename = parent.filename
         file_type = parent.file_type
+        import_target = parent.import_target
         source_path = import_storage_path(self._settings.import_temp_dir, parent_id)
 
         early_conflict = _retry_eligibility_conflict(parent)
@@ -155,6 +162,7 @@ class ImportUploadService:
                 dry_run=False,
                 job_id=child_id,
                 parent_job_id=parent_id,
+                import_target=import_target,
             )
             self._session.commit()
             self._session.refresh(child)
