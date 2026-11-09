@@ -1,5 +1,7 @@
 """ORM models (imported by Alembic for autogenerate metadata)."""
 
+from smarthris.models.course import Course, CourseStatus
+from smarthris.models.course_enrolment import CourseEnrolment, CourseEnrolmentStatus
 from smarthris.models.department import Department
 from smarthris.models.employee import Employee, EmployeeStatus
 from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
@@ -8,6 +10,10 @@ from smarthris.models.import_error import ImportError
 from smarthris.models.import_job import ImportFileType, ImportJob, ImportJobStatus
 
 __all__ = [
+    "Course",
+    "CourseEnrolment",
+    "CourseEnrolmentStatus",
+    "CourseStatus",
     "Department",
     "Employee",
     "EmployeeStatus",

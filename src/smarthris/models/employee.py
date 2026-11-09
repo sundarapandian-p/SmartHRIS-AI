@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from smarthris.db.base import Base
 
 if TYPE_CHECKING:
+    from smarthris.models.course_enrolment import CourseEnrolment
     from smarthris.models.department import Department
 
 
@@ -65,3 +66,6 @@ class Employee(Base):
         back_populates="direct_reports",
     )
     direct_reports: Mapped[list[Employee]] = relationship(back_populates="manager")
+    course_enrolments: Mapped[list[CourseEnrolment]] = relationship(
+        back_populates="employee",
+    )
