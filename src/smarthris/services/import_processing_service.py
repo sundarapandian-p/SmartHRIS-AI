@@ -19,7 +19,7 @@ from smarthris.importing.validation.row_validator import (
 )
 from smarthris.models.employee import Employee
 from smarthris.models.import_error import ImportError
-from smarthris.models.import_job import ImportJobStatus
+from smarthris.models.import_job import ImportJobStatus, ImportTarget
 from smarthris.repositories.department_repository import DepartmentRepository
 from smarthris.repositories.employee_repository import EmployeeRepository
 from smarthris.repositories.import_error_repository import ImportErrorRepository
@@ -59,6 +59,7 @@ def _import_error_from_issue(job_id: str, issue: ImportRowIssue) -> ImportError:
         import_job_id=job_id,
         row_number=issue.row_number,
         employee_number=issue.employee_number,
+        record_key=issue.record_key,
         field=issue.field,
         code=issue.code,
         message=issue.message,
@@ -423,5 +424,73 @@ def process_import_job(
     session_factory: Callable[[], Session] | sessionmaker[Session],
     settings: Settings,
 ) -> None:
-    """BackgroundTasks entrypoint: validate and insert an uploaded import job."""
-    ImportProcessingService(session_factory, settings).process(job_id)
+    """
+    BackgroundTasks entrypoint: dispatch by ``ImportJob.import_target``.
+
+    EMPLOYEES → employee processor (unchanged).
+    COURSES → course processor.
+    ENROLMENTS → mark failed (not implemented yet).
+    """
+    session = session_factory()
+    try:
+        job = ImportJobRepository(session).get_by_id(job_id)
+        if job is None:
+            logger.info("Import job %s not found; skipping dispatch", job_id)
+            return
+        target = job.import_target
+    finally:
+        session.close()
+
+    if target is ImportTarget.EMPLOYEES:
+        ImportProcessingService(session_factory, settings).process(job_id)
+        return
+
+    if target is ImportTarget.COURSES:
+        from smarthris.services.course_import_processing_service import (
+            CourseImportProcessingService,
+        )
+
+        CourseImportProcessingService(session_factory, settings).process(job_id)
+        return
+
+    if target is ImportTarget.ENROLMENTS:
+        _fail_unsupported_target(
+            session_factory,
+            job_id,
+            "Enrolment import processing is not implemented yet",
+        )
+        return
+
+    _fail_unsupported_target(
+        session_factory,
+        job_id,
+        f"Unsupported import target '{getattr(target, 'value', target)}'",
+    )
+
+
+def _fail_unsupported_target(
+    session_factory: Callable[[], Session] | sessionmaker[Session],
+    job_id: str,
+    message: str,
+) -> None:
+    session = session_factory()
+    try:
+        jobs = ImportJobRepository(session)
+        job = jobs.get_by_id(job_id)
+        if job is None:
+            return
+        if job.status in {ImportJobStatus.COMPLETED, ImportJobStatus.FAILED}:
+            return
+        if job.status == ImportJobStatus.PENDING:
+            jobs.mark_running(job)
+            session.flush()
+        jobs.mark_failed(job, error_message=_sanitize_error_message(message))
+        session.commit()
+    except Exception:
+        logger.exception("Unable to mark unsupported-target job %s as failed", job_id)
+        try:
+            session.rollback()
+        except Exception:
+            pass
+    finally:
+        session.close()

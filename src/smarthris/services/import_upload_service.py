@@ -65,6 +65,33 @@ class ImportUploadService:
         upload: UploadFile,
         dry_run: bool = False,
     ) -> ImportJobRead:
+        """Create a pending employee import job from an uploaded CSV."""
+        return self._create_upload_job(
+            upload=upload,
+            dry_run=dry_run,
+            import_target=ImportTarget.EMPLOYEES,
+        )
+
+    def create_course_from_upload(
+        self,
+        *,
+        upload: UploadFile,
+        dry_run: bool = False,
+    ) -> ImportJobRead:
+        """Create a pending course import job from an uploaded CSV."""
+        return self._create_upload_job(
+            upload=upload,
+            dry_run=dry_run,
+            import_target=ImportTarget.COURSES,
+        )
+
+    def _create_upload_job(
+        self,
+        *,
+        upload: UploadFile,
+        dry_run: bool,
+        import_target: ImportTarget,
+    ) -> ImportJobRead:
         display_name = sanitize_original_filename(upload.filename)
         assert_csv_filename(display_name)
 
@@ -90,7 +117,7 @@ class ImportUploadService:
                 file_type=ImportFileType.CSV,
                 dry_run=dry_run,
                 job_id=job_id,
-                import_target=ImportTarget.EMPLOYEES,
+                import_target=import_target,
             )
             self._session.commit()
             self._session.refresh(job)

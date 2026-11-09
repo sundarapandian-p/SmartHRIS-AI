@@ -24,3 +24,4 @@ class ImportRowIssue:
     message: str
     field: str | None = None
     employee_number: str | None = None
+    record_key: str | None = None
