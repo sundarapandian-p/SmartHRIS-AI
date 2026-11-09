@@ -6,6 +6,17 @@ from typing import Literal
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from smarthris.rag.config import (
+    DEFAULT_EMBEDDING_MODEL_NAME,
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_RAG_CHUNK_OVERLAP,
+    DEFAULT_RAG_CHUNK_SIZE,
+    DEFAULT_RAG_DOCUMENT_DIR,
+    DEFAULT_RAG_INDEX_DIR,
+    DEFAULT_RAG_TOP_K,
+)
+
 
 class Settings(BaseSettings):
     """Central configuration; secrets live in .env (see .env.example)."""
@@ -46,6 +57,51 @@ class Settings(BaseSettings):
         default="data/imports",
         validation_alias="IMPORT_TEMP_DIR",
         description="Private directory for temporary upload files (not web-served).",
+    )
+
+    # RAG foundation (Phase 5.2A) — paths and knobs only; no AI runtime wired yet.
+    ollama_base_url: str = Field(
+        default=DEFAULT_OLLAMA_BASE_URL,
+        validation_alias="OLLAMA_BASE_URL",
+        description="Base URL for the local Ollama HTTP API.",
+    )
+    ollama_model: str = Field(
+        default=DEFAULT_OLLAMA_MODEL,
+        validation_alias="OLLAMA_MODEL",
+        description="Default Ollama model tag for answer generation.",
+    )
+    embedding_model_name: str = Field(
+        default=DEFAULT_EMBEDDING_MODEL_NAME,
+        validation_alias="EMBEDDING_MODEL_NAME",
+        description="Sentence-Transformers model id for local embeddings.",
+    )
+    rag_document_dir: str = Field(
+        default=DEFAULT_RAG_DOCUMENT_DIR,
+        validation_alias="RAG_DOCUMENT_DIR",
+        description="Private directory for uploaded HR documents (not web-served).",
+    )
+    rag_index_dir: str = Field(
+        default=DEFAULT_RAG_INDEX_DIR,
+        validation_alias="RAG_INDEX_DIR",
+        description="Private directory for FAISS/BM25 index artifacts.",
+    )
+    rag_chunk_size: int = Field(
+        default=DEFAULT_RAG_CHUNK_SIZE,
+        validation_alias="RAG_CHUNK_SIZE",
+        description="Target chunk size in characters for document splitting.",
+        ge=1,
+    )
+    rag_chunk_overlap: int = Field(
+        default=DEFAULT_RAG_CHUNK_OVERLAP,
+        validation_alias="RAG_CHUNK_OVERLAP",
+        description="Character overlap between consecutive chunks.",
+        ge=0,
+    )
+    rag_top_k: int = Field(
+        default=DEFAULT_RAG_TOP_K,
+        validation_alias="RAG_TOP_K",
+        description="Default number of chunks to return after hybrid retrieval.",
+        ge=1,
     )
 
     @computed_field  # type: ignore[prop-decorator]

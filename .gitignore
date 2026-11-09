@@ -12,6 +12,7 @@ dist/
 build/
 data/indexes/
 data/imports/
+data/documents/
 data/performance/
 *.log
 *.perf.json
