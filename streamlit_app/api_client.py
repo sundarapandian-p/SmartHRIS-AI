@@ -16,6 +16,16 @@ from pydantic import BaseModel, ValidationError
 from smarthris.schemas.employee import EmployeeListResponse, EmployeeSortField, SortOrder
 from smarthris.schemas.health import HealthResponse
 from smarthris.schemas.import_job import ImportErrorListResponse, ImportJobRead
+from smarthris.schemas.lms_analytics import (
+    CourseAnalyticsListResponse,
+    CourseAnalyticsSortField,
+    EmployeeAnalyticsListResponse,
+    EmployeeAnalyticsSortField,
+    EnrolmentTrendsResponse,
+    LmsSummaryResponse,
+    TopCoursesResponse,
+    TrendGranularity,
+)
 from streamlit_app.constants import DEFAULT_API_BASE_URL
 
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
@@ -314,3 +324,135 @@ class SmartHrisApiClient:
             expected_status=201,
         )
         return self._validate_model(ImportJobRead, payload, status_code=201)
+
+    def get_lms_summary(self) -> LmsSummaryResponse:
+        """GET /analytics/lms/summary."""
+        payload = self._request_json(
+            "GET",
+            "/analytics/lms/summary",
+            expected_status=200,
+        )
+        return self._validate_model(LmsSummaryResponse, payload, status_code=200)
+
+    def list_lms_courses(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        category: str | None = None,
+        course_status: str | None = None,
+        sort_by: str | CourseAnalyticsSortField = CourseAnalyticsSortField.ENROLMENTS,
+        sort_order: str | SortOrder = SortOrder.DESC,
+    ) -> CourseAnalyticsListResponse:
+        """GET /analytics/lms/courses."""
+        sort_by_value = (
+            sort_by.value if isinstance(sort_by, CourseAnalyticsSortField) else sort_by
+        )
+        sort_order_value = sort_order.value if isinstance(sort_order, SortOrder) else sort_order
+        params = self._omit_none(
+            {
+                "page": page,
+                "page_size": page_size,
+                "category": category,
+                "course_status": course_status,
+                "sort_by": sort_by_value,
+                "sort_order": sort_order_value,
+            }
+        )
+        payload = self._request_json(
+            "GET",
+            "/analytics/lms/courses",
+            params=params,
+            expected_status=200,
+        )
+        return self._validate_model(CourseAnalyticsListResponse, payload, status_code=200)
+
+    def list_lms_top_courses(
+        self,
+        *,
+        limit: int = 10,
+        status_filter: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> TopCoursesResponse:
+        """GET /analytics/lms/courses/top."""
+        params = self._omit_none(
+            {
+                "limit": limit,
+                "status_filter": status_filter,
+                "from_date": from_date,
+                "to_date": to_date,
+            }
+        )
+        payload = self._request_json(
+            "GET",
+            "/analytics/lms/courses/top",
+            params=params,
+            expected_status=200,
+        )
+        return self._validate_model(TopCoursesResponse, payload, status_code=200)
+
+    def list_lms_employees(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        department_id: int | None = None,
+        employee_status: str | None = None,
+        sort_by: str | EmployeeAnalyticsSortField = EmployeeAnalyticsSortField.ENROLMENTS,
+        sort_order: str | SortOrder = SortOrder.DESC,
+    ) -> EmployeeAnalyticsListResponse:
+        """GET /analytics/lms/employees."""
+        sort_by_value = (
+            sort_by.value
+            if isinstance(sort_by, EmployeeAnalyticsSortField)
+            else sort_by
+        )
+        sort_order_value = sort_order.value if isinstance(sort_order, SortOrder) else sort_order
+        params = self._omit_none(
+            {
+                "page": page,
+                "page_size": page_size,
+                "department_id": department_id,
+                "employee_status": employee_status,
+                "sort_by": sort_by_value,
+                "sort_order": sort_order_value,
+            }
+        )
+        payload = self._request_json(
+            "GET",
+            "/analytics/lms/employees",
+            params=params,
+            expected_status=200,
+        )
+        return self._validate_model(EmployeeAnalyticsListResponse, payload, status_code=200)
+
+    def list_lms_enrolment_trends(
+        self,
+        *,
+        from_date: str,
+        to_date: str,
+        granularity: str | TrendGranularity = TrendGranularity.DAY,
+        status: str | None = None,
+        course_code: str | None = None,
+    ) -> EnrolmentTrendsResponse:
+        """GET /analytics/lms/trends/enrolments."""
+        granularity_value = (
+            granularity.value if isinstance(granularity, TrendGranularity) else granularity
+        )
+        params = self._omit_none(
+            {
+                "from_date": from_date,
+                "to_date": to_date,
+                "granularity": granularity_value,
+                "status": status,
+                "course_code": course_code,
+            }
+        )
+        payload = self._request_json(
+            "GET",
+            "/analytics/lms/trends/enrolments",
+            params=params,
+            expected_status=200,
+        )
+        return self._validate_model(EnrolmentTrendsResponse, payload, status_code=200)

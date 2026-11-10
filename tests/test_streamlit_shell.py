@@ -14,6 +14,7 @@ def test_streamlit_app_layout_exists() -> None:
     assert (pages / "dashboard.py").is_file()
     assert (pages / "employees.py").is_file()
     assert (pages / "bulk_import.py").is_file()
+    assert (pages / "lms_analytics.py").is_file()
 
 
 def test_app_entrypoint_mentions_expected_startup() -> None:
@@ -24,3 +25,4 @@ def test_app_entrypoint_mentions_expected_startup() -> None:
     assert "NAV_DASHBOARD" in text
     assert "NAV_EMPLOYEES" in text
     assert "NAV_BULK_IMPORT" in text
+    assert "NAV_LMS_ANALYTICS" in text

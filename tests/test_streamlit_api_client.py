@@ -16,6 +16,7 @@ from streamlit_app.constants import (
     NAV_DASHBOARD,
     NAV_EMPLOYEES,
     NAV_ITEMS,
+    NAV_LMS_ANALYTICS,
 )
 
 _NOW = datetime(2026, 11, 1, 12, 0, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z")
@@ -70,10 +71,11 @@ def _client(handler) -> SmartHrisApiClient:
 
 
 def test_nav_items_match_sidebar_labels() -> None:
-    assert NAV_ITEMS == (NAV_DASHBOARD, NAV_EMPLOYEES, NAV_BULK_IMPORT)
+    assert NAV_ITEMS == (NAV_DASHBOARD, NAV_EMPLOYEES, NAV_BULK_IMPORT, NAV_LMS_ANALYTICS)
     assert NAV_DASHBOARD == "Dashboard"
     assert NAV_EMPLOYEES == "Employees"
     assert NAV_BULK_IMPORT == "Bulk Import"
+    assert NAV_LMS_ANALYTICS == "LMS Analytics"
 
 
 def test_default_base_url_constant(monkeypatch: pytest.MonkeyPatch) -> None:
