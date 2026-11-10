@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from smarthris.api.routers import employees, health, imports
+from smarthris.api.routers import employees, health, imports, lms_analytics
 from smarthris.config import Settings, get_settings
 from smarthris.core.handlers import register_exception_handlers
 from smarthris.db.session import create_db_engine, create_session_factory
@@ -35,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(employees.router)
     app.include_router(imports.router)
+    app.include_router(lms_analytics.router)
     return app
 
 
