@@ -34,6 +34,16 @@ class HrDocumentRead(BaseModel):
     error_message: str | None
 
 
+class HrDocumentListResponse(BaseModel):
+    """Paginated HR document metadata (no storage paths or bodies)."""
+
+    items: list[HrDocumentRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class HrDocumentChunkCreate(BaseModel):
     """Inbound chunk metadata for persistence by future services."""
 
