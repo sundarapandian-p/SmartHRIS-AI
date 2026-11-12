@@ -274,6 +274,51 @@ class SmartHrisApiClient:
         dry_run: bool = False,
     ) -> ImportJobRead:
         """POST /imports — multipart CSV upload with optional dry_run form field."""
+        return self._upload_import_csv(
+            path="/imports",
+            filename=filename,
+            content=content,
+            dry_run=dry_run,
+        )
+
+    def upload_course_import(
+        self,
+        *,
+        filename: str,
+        content: bytes | BinaryIO,
+        dry_run: bool = False,
+    ) -> ImportJobRead:
+        """POST /imports/courses — course CSV multipart upload."""
+        return self._upload_import_csv(
+            path="/imports/courses",
+            filename=filename,
+            content=content,
+            dry_run=dry_run,
+        )
+
+    def upload_enrolment_import(
+        self,
+        *,
+        filename: str,
+        content: bytes | BinaryIO,
+        dry_run: bool = False,
+    ) -> ImportJobRead:
+        """POST /imports/enrolments — enrolment CSV multipart upload."""
+        return self._upload_import_csv(
+            path="/imports/enrolments",
+            filename=filename,
+            content=content,
+            dry_run=dry_run,
+        )
+
+    def _upload_import_csv(
+        self,
+        *,
+        path: str,
+        filename: str,
+        content: bytes | BinaryIO,
+        dry_run: bool,
+    ) -> ImportJobRead:
         if not filename or not str(filename).strip():
             raise ApiError("A CSV filename is required for upload.")
         files = {
@@ -282,7 +327,7 @@ class SmartHrisApiClient:
         data = {"dry_run": "true" if dry_run else "false"}
         payload = self._request_json(
             "POST",
-            "/imports",
+            path,
             data=data,
             files=files,
             timeout=self.upload_timeout,

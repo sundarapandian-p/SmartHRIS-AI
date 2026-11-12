@@ -15,6 +15,7 @@ from streamlit_app.pages.bulk_import import (
     PREVIEW_ROW_LIMIT,
     SESSION_ERROR_FETCH_ERROR,
     SESSION_ERROR_SNAPSHOT,
+    SESSION_IMPORT_TARGET,
     SESSION_IN_FLIGHT,
     SESSION_JOB_ID,
     SESSION_JOB_SNAPSHOT,
@@ -23,6 +24,9 @@ from streamlit_app.pages.bulk_import import (
     SESSION_RETRY_IN_FLIGHT,
     SESSION_SOURCE_JOB_ID,
     SESSION_STATUS_ERROR,
+    TARGET_COURSES,
+    TARGET_EMPLOYEES,
+    TARGET_ENROLMENTS,
     CsvPreviewError,
     error_list_to_rows,
     fetch_and_store_import_errors,
@@ -31,10 +35,13 @@ from streamlit_app.pages.bulk_import import (
     is_retry_eligible,
     is_terminal_status,
     job_snapshot_from_model,
+    normalize_import_target,
     normalize_status,
     preview_csv,
     should_auto_poll,
     should_fetch_import_errors,
+    target_guidance,
+    upload_for_target,
     validate_csv_selection,
 )
 
@@ -103,6 +110,7 @@ class RecordingClient:
     def __init__(self, job: ImportJobRead | None = None) -> None:
         self.job = job or _job()
         self.upload_calls: list[dict[str, Any]] = []
+        self.upload_endpoints: list[str] = []
         self.get_calls: list[str] = []
         self.error_calls: list[dict[str, Any]] = []
         self.retry_calls: list[str] = []
@@ -115,6 +123,17 @@ class RecordingClient:
         self._get_index = 0
 
     def upload_import(self, **kwargs: Any) -> ImportJobRead:
+        self.upload_endpoints.append("/imports")
+        self.upload_calls.append(kwargs)
+        return self.job
+
+    def upload_course_import(self, **kwargs: Any) -> ImportJobRead:
+        self.upload_endpoints.append("/imports/courses")
+        self.upload_calls.append(kwargs)
+        return self.job
+
+    def upload_enrolment_import(self, **kwargs: Any) -> ImportJobRead:
+        self.upload_endpoints.append("/imports/enrolments")
         self.upload_calls.append(kwargs)
         return self.job
 
@@ -418,9 +437,65 @@ def test_page_renders_without_file() -> None:
     assert any("Select a CSV file" in i.value for i in at.info)
 
 
+def test_employees_is_default_import_target() -> None:
+    at = _run_page()
+    assert not at.exception
+    assert at.radio
+    assert at.radio[0].value == "Employees"
+    assert at.session_state[SESSION_IMPORT_TARGET] == TARGET_EMPLOYEES
+    assert any("employee CSV" in c.value for c in at.caption)
+    assert any("Employee Number" in m.value for m in at.markdown)
+
+
+def test_course_target_shows_guidance_and_routes_upload() -> None:
+    client = RecordingClient(_job(import_target="courses", filename="courses.csv"))
+    at = _run_page(api_client=client)
+    at.radio[0].set_value("Courses").run()
+    assert at.session_state[SESSION_IMPORT_TARGET] == TARGET_COURSES
+    assert any("course CSV" in c.value for c in at.caption)
+    assert any("Course Code" in m.value for m in at.markdown)
+
+    at.file_uploader[0].set_value(("courses.csv", _csv_bytes(rows=2), "text/csv")).run()
+    at.button[0].click().run()
+    assert client.upload_endpoints == ["/imports/courses"]
+    assert len(client.upload_calls) == 1
+    assert any("courses" in m.value for m in at.markdown)
+
+
+def test_enrolment_target_shows_guidance_and_routes_upload() -> None:
+    client = RecordingClient(_job(import_target="enrolments", filename="enrolments.csv"))
+    at = _run_page(api_client=client)
+    at.radio[0].set_value("Enrolments").run()
+    assert at.session_state[SESSION_IMPORT_TARGET] == TARGET_ENROLMENTS
+    assert any("enrolment CSV" in c.value for c in at.caption)
+    assert any("Enrolment Date" in m.value for m in at.markdown)
+
+    at.file_uploader[0].set_value(("enrolments.csv", _csv_bytes(rows=2), "text/csv")).run()
+    at.button[0].click().run()
+    assert client.upload_endpoints == ["/imports/enrolments"]
+    assert len(client.upload_calls) == 1
+
+
+def test_employee_target_routes_to_existing_upload() -> None:
+    client = RecordingClient(_job())
+    at = _run_page(api_client=client)
+    at.radio[0].set_value("Courses").run()
+    at.radio[0].set_value("Employees").run()
+    assert at.session_state[SESSION_IMPORT_TARGET] == TARGET_EMPLOYEES
+    at.file_uploader[0].set_value(("employees.csv", _csv_bytes(rows=2), "text/csv")).run()
+    at.button[0].click().run()
+    assert client.upload_endpoints == ["/imports"]
+
+
 def test_page_valid_preview_without_upload() -> None:
     class GuardClient:
         def upload_import(self, **kwargs):  # noqa: ANN003
+            raise AssertionError("upload must not run automatically")
+
+        def upload_course_import(self, **kwargs):  # noqa: ANN003
+            raise AssertionError("upload must not run automatically")
+
+        def upload_enrolment_import(self, **kwargs):  # noqa: ANN003
             raise AssertionError("upload must not run automatically")
 
         def get_import_job(self, job_id: str) -> ImportJobRead:
@@ -693,11 +768,73 @@ def test_error_list_to_rows_maps_schema_fields() -> None:
         {
             "row_number": 3,
             "employee_number": "E3",
+            "record_key": None,
             "field": "work_email",
             "code": "invalid_email",
             "message": "Invalid email",
         }
     ]
+
+
+def test_error_list_to_rows_includes_record_key_when_present() -> None:
+    payload = {
+        "items": [
+            {
+                "id": 1,
+                "row_number": 2,
+                "employee_number": None,
+                "record_key": "C101|E55",
+                "field": "course_code",
+                "code": "unknown_course",
+                "message": "Course not found",
+            }
+        ]
+    }
+    rows = error_list_to_rows(payload)
+    assert rows[0]["record_key"] == "C101|E55"
+    assert rows[0]["employee_number"] is None
+
+
+def test_normalize_import_target_defaults_to_employees() -> None:
+    assert normalize_import_target(None) == TARGET_EMPLOYEES
+    assert normalize_import_target("COURSES") == TARGET_COURSES
+    assert normalize_import_target("enrolments") == TARGET_ENROLMENTS
+    assert normalize_import_target("unknown") == TARGET_EMPLOYEES
+
+
+def test_target_guidance_is_target_specific() -> None:
+    employees = target_guidance(TARGET_EMPLOYEES)
+    courses = target_guidance(TARGET_COURSES)
+    enrolments = target_guidance(TARGET_ENROLMENTS)
+    assert "employee" in employees["caption"].lower()
+    assert "course" in courses["caption"].lower()
+    assert "enrolment" in enrolments["caption"].lower()
+    assert "Course Code" in courses["columns"]
+    assert "Employee Number" in enrolments["columns"]
+    assert "do not insert employees" in employees["dry_run_label"]
+    assert "do not insert courses" in courses["dry_run_label"]
+    assert "do not insert enrolments" in enrolments["dry_run_label"]
+
+
+def test_upload_for_target_routes_to_matching_client_method() -> None:
+    client = RecordingClient(_job())
+    content = b"a,b\n1,2\n"
+    upload_for_target(
+        client, TARGET_EMPLOYEES, filename="e.csv", content=content, dry_run=False
+    )
+    upload_for_target(
+        client, TARGET_COURSES, filename="c.csv", content=content, dry_run=True
+    )
+    upload_for_target(
+        client, TARGET_ENROLMENTS, filename="n.csv", content=content, dry_run=False
+    )
+    assert client.upload_endpoints == [
+        "/imports",
+        "/imports/courses",
+        "/imports/enrolments",
+    ]
+    assert client.upload_calls[1]["dry_run"] is True
+    assert client.upload_calls[1]["filename"] == "c.csv"
 
 
 def test_fetch_errors_pagination_and_empty(monkeypatch: pytest.MonkeyPatch) -> None:

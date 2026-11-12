@@ -263,6 +263,115 @@ def test_upload_import_requires_filename() -> None:
         )
 
 
+def test_upload_course_import_csv_multipart() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/imports/courses"
+        content_type = request.headers["content-type"]
+        assert content_type.startswith("multipart/form-data")
+        body = request.content
+        assert b'name="file"' in body
+        assert b"courses.csv" in body
+        assert b'name="dry_run"' in body
+        assert b"false" in body
+        return httpx.Response(
+            201,
+            json=_import_job(filename="courses.csv", import_target="courses"),
+        )
+
+    job = _client(handler).upload_course_import(
+        filename="courses.csv",
+        content=b"Course Code,Course Name\nC1,Safety\n",
+        dry_run=False,
+    )
+    assert job.id == "11111111-1111-1111-1111-111111111111"
+    assert job.filename == "courses.csv"
+    assert job.dry_run is False
+
+
+def test_upload_enrolment_import_csv_multipart() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/imports/enrolments"
+        content_type = request.headers["content-type"]
+        assert content_type.startswith("multipart/form-data")
+        body = request.content
+        assert b'name="file"' in body
+        assert b"enrolments.csv" in body
+        assert b'name="dry_run"' in body
+        assert b"false" in body
+        return httpx.Response(
+            201,
+            json=_import_job(filename="enrolments.csv", import_target="enrolments"),
+        )
+
+    job = _client(handler).upload_enrolment_import(
+        filename="enrolments.csv",
+        content=b"Employee Number,Course Code\nE1,C1\n",
+        dry_run=False,
+    )
+    assert job.filename == "enrolments.csv"
+
+
+def test_upload_course_import_dry_run_true() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/imports/courses"
+        body = request.content
+        assert b'name="dry_run"' in body
+        assert b"true" in body
+        return httpx.Response(
+            201,
+            json=_import_job(dry_run=True, import_target="courses"),
+        )
+
+    job = _client(handler).upload_course_import(
+        filename="courses.csv",
+        content=b"a,b\n1,2\n",
+        dry_run=True,
+    )
+    assert job.dry_run is True
+
+
+def test_upload_enrolment_import_dry_run_true() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/imports/enrolments"
+        body = request.content
+        assert b'name="dry_run"' in body
+        assert b"true" in body
+        return httpx.Response(
+            201,
+            json=_import_job(dry_run=True, import_target="enrolments"),
+        )
+
+    job = _client(handler).upload_enrolment_import(
+        filename="enrolments.csv",
+        content=b"a,b\n1,2\n",
+        dry_run=True,
+    )
+    assert job.dry_run is True
+
+
+def test_upload_course_import_requires_filename() -> None:
+    with pytest.raises(ApiError, match="filename"):
+        SmartHrisApiClient(base_url="http://test.local").upload_course_import(
+            filename="  ",
+            content=b"x",
+        )
+
+
+def test_upload_enrolment_import_api_error_consistent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/imports/enrolments"
+        return httpx.Response(
+            400,
+            json={"detail": {"message": "Only CSV uploads are supported", "code": "validation_error"}},
+        )
+
+    with pytest.raises(ApiError, match="Only CSV uploads are supported") as exc_info:
+        _client(handler).upload_enrolment_import(filename="x.csv", content=b"a,b\n")
+    assert exc_info.value.status_code == 400
+
+
 def test_get_import_job_status() -> None:
     job_id = "22222222-2222-2222-2222-222222222222"
 

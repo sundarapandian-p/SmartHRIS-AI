@@ -18,6 +18,18 @@ from streamlit_app.constants import NAV_BULK_IMPORT
 MAX_UPLOAD_BYTES = 52_428_800
 PREVIEW_ROW_LIMIT = 10
 
+TARGET_EMPLOYEES = "employees"
+TARGET_COURSES = "courses"
+TARGET_ENROLMENTS = "enrolments"
+IMPORT_TARGETS = (TARGET_EMPLOYEES, TARGET_COURSES, TARGET_ENROLMENTS)
+TARGET_LABELS = {
+    TARGET_EMPLOYEES: "Employees",
+    TARGET_COURSES: "Courses",
+    TARGET_ENROLMENTS: "Enrolments",
+}
+
+SESSION_IMPORT_TARGET = "bulk_import_target"
+
 # Backend ImportJobStatus values (no separate "processing" state — use running).
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -160,6 +172,83 @@ def normalize_status(status: object) -> str:
     return str(value)
 
 
+def normalize_import_target(value: object | None) -> str:
+    """Return a known import target; default to employees."""
+    raw = getattr(value, "value", value)
+    text = str(raw or TARGET_EMPLOYEES).strip().lower()
+    return text if text in IMPORT_TARGETS else TARGET_EMPLOYEES
+
+
+def target_guidance(target: str) -> dict[str, str]:
+    """Target-specific copy for captions, uploader, and dry-run."""
+    target = normalize_import_target(target)
+    if target == TARGET_COURSES:
+        return {
+            "caption": (
+                "Upload a course CSV to create an import job, follow status, "
+                "review row errors, and retry eligible failed/partial imports."
+            ),
+            "columns": (
+                "The API expects CSV columns such as **Course Code**, **Course Name**, "
+                "**Category**, **Duration Hours**, and **Status** "
+                "(aliases like `course_id` / `title` are accepted by the backend). "
+                "Excel (`.xlsx`) is not supported here."
+            ),
+            "uploader_label": "Course CSV file",
+            "dry_run_label": "Dry run (validate only; do not insert courses)",
+            "dry_run_caption": "Dry run: yes (validate only; no course inserts).",
+        }
+    if target == TARGET_ENROLMENTS:
+        return {
+            "caption": (
+                "Upload an enrolment CSV to create an import job, follow status, "
+                "review row errors, and retry eligible failed/partial imports. "
+                "Employees and courses must already exist."
+            ),
+            "columns": (
+                "The API expects CSV columns such as **Employee Number**, **Course Code**, "
+                "**Enrolment Date**, **Status**, optional **Completion Date**, and optional "
+                "**Score**. Excel (`.xlsx`) is not supported here."
+            ),
+            "uploader_label": "Enrolment CSV file",
+            "dry_run_label": "Dry run (validate only; do not insert enrolments)",
+            "dry_run_caption": "Dry run: yes (validate only; no enrolment inserts).",
+        }
+    return {
+        "caption": (
+            "Upload an employee CSV to create an import job, follow status, "
+            "review row errors, and retry eligible failed/partial imports."
+        ),
+        "columns": (
+            "The API expects CSV columns such as **Employee Number**, **First Name**, "
+            "**Last Name**, **Work Email**, and **Department ID** and/or **Department Name** "
+            "(aliases like `employee_id` / `email` are accepted by the backend). "
+            "Excel (`.xlsx`) is not supported here."
+        ),
+        "uploader_label": "Employee CSV file",
+        "dry_run_label": "Dry run (validate only; do not insert employees)",
+        "dry_run_caption": "Dry run: yes (validate only; no employee inserts).",
+    }
+
+
+def upload_for_target(
+    client: SmartHrisApiClient,
+    target: str,
+    *,
+    filename: str,
+    content: bytes,
+    dry_run: bool,
+) -> Any:
+    """Dispatch multipart upload to the matching API client method."""
+    target = normalize_import_target(target)
+    kwargs = {"filename": filename, "content": content, "dry_run": dry_run}
+    if target == TARGET_COURSES:
+        return client.upload_course_import(**kwargs)
+    if target == TARGET_ENROLMENTS:
+        return client.upload_enrolment_import(**kwargs)
+    return client.upload_import(**kwargs)
+
+
 def is_terminal_status(status: object) -> bool:
     return normalize_status(status) in TERMINAL_STATUSES
 
@@ -281,8 +370,11 @@ def fetch_and_store_job_status(
 
 def _display_job_snapshot(snapshot: dict[str, Any]) -> None:
     status = normalize_status(snapshot.get("status"))
+    target = normalize_import_target(snapshot.get("import_target"))
+    guidance = target_guidance(target)
     st.markdown(f"**Import Job ID:** `{snapshot.get('id', '—')}`")
     st.markdown(f"**Status:** `{status}`")
+    st.markdown(f"**Import target:** `{target}`")
     parent_job_id = snapshot.get("parent_job_id")
     if parent_job_id:
         st.caption(f"Parent job (retry source): `{parent_job_id}`")
@@ -301,7 +393,7 @@ def _display_job_snapshot(snapshot: dict[str, Any]) -> None:
         f"Finished: `{format_timestamp(snapshot.get('finished_at'))}`"
     )
     if snapshot.get("dry_run"):
-        st.caption("Dry run: yes (validate only; no employee inserts).")
+        st.caption(guidance["dry_run_caption"])
     error_message = snapshot.get("error_message")
     if error_message:
         st.error(f"Job error: {error_message}")
@@ -325,6 +417,7 @@ def error_list_to_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "row_number": item.get("row_number"),
                 "employee_number": item.get("employee_number"),
+                "record_key": item.get("record_key"),
                 "field": item.get("field"),
                 "code": item.get("code"),
                 "message": item.get("message"),
@@ -565,19 +658,30 @@ def _static_job_status_panel(api_client: SmartHrisApiClient | None = None) -> No
 def render(*, api_client: SmartHrisApiClient | None = None) -> None:
     """Render CSV upload controls and import job status (poll when non-terminal)."""
     st.title(NAV_BULK_IMPORT)
-    st.caption(
-        "Upload an employee CSV to create an import job, follow status, "
-        "review row errors, and retry eligible failed/partial imports."
+
+    if SESSION_IMPORT_TARGET not in st.session_state:
+        st.session_state[SESSION_IMPORT_TARGET] = TARGET_EMPLOYEES
+
+    selected_label = st.radio(
+        "Import target",
+        options=[TARGET_LABELS[t] for t in IMPORT_TARGETS],
+        index=IMPORT_TARGETS.index(
+            normalize_import_target(st.session_state[SESSION_IMPORT_TARGET])
+        ),
+        horizontal=True,
+        key="bulk_import_target_radio",
+        help="Employees remain the default. Courses and enrolments use dedicated API endpoints.",
     )
-    st.markdown(
-        "The API expects CSV columns such as **Employee Number**, **First Name**, "
-        "**Last Name**, **Work Email**, and **Department ID** and/or **Department Name** "
-        "(aliases like `employee_id` / `email` are accepted by the backend). "
-        "Excel (`.xlsx`) is not supported here."
-    )
+    label_to_target = {label: key for key, label in TARGET_LABELS.items()}
+    selected_target = normalize_import_target(label_to_target.get(selected_label))
+    st.session_state[SESSION_IMPORT_TARGET] = selected_target
+    guidance = target_guidance(selected_target)
+
+    st.caption(guidance["caption"])
+    st.markdown(guidance["columns"])
 
     uploaded = st.file_uploader(
-        "Employee CSV file",
+        guidance["uploader_label"],
         type=["csv"],
         accept_multiple_files=False,
         help=f"Maximum size: 50 MiB ({MAX_UPLOAD_BYTES:,} bytes). UTF-8 recommended.",
@@ -639,7 +743,7 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
                             )
 
                 dry_run = st.checkbox(
-                    "Dry run (validate only; do not insert employees)",
+                    guidance["dry_run_label"],
                     value=False,
                     key="bulk_import_dry_run",
                 )
@@ -654,7 +758,9 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
                     progress = st.progress(0, text="Uploading CSV to the API…")
                     try:
                         progress.progress(40, text="Uploading CSV to the API…")
-                        job = client.upload_import(
+                        job = upload_for_target(
+                            client,
+                            selected_target,
                             filename=filename,
                             content=content,
                             dry_run=dry_run,
@@ -675,6 +781,10 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
                         apply_job_snapshot(job_snapshot_from_model(job))
                         st.success("Upload accepted. Import job created.")
                         st.markdown(f"**Import Job ID:** `{job.id}`")
+                        st.markdown(
+                            f"**Import target:** "
+                            f"`{normalize_import_target(getattr(job, 'import_target', selected_target))}`"
+                        )
                         st.markdown(f"**Status:** `{normalize_status(job.status)}`")
                         st.markdown(f"**Dry run:** `{'yes' if job.dry_run else 'no'}`")
 
