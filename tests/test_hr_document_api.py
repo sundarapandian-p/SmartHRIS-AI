@@ -46,8 +46,9 @@ def documents_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
+    with patch("smarthris.api.routers.documents.process_hr_document"):
+        with TestClient(app) as test_client:
+            yield test_client
     app.dependency_overrides.clear()
 
 
@@ -324,6 +325,71 @@ def test_list_pagination_and_filters(documents_api_client: TestClient) -> None:
     assert filtered.status_code == 200
     assert filtered.json()["total"] == 2
     assert all(item["doc_type"] == "policy" for item in filtered.json()["items"])
+
+
+def test_upload_schedules_background_processing(
+    db_session: Session,
+    integration_database_url: str,
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        app_name="SmartHRIS-Documents-Schedule",
+        database_url=integration_database_url,
+        rag_document_dir=str(tmp_path / "documents"),
+        max_upload_bytes=1024,
+    )
+    app = create_app(settings)
+
+    def override_get_db():
+        try:
+            yield db_session
+        except Exception:
+            db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = override_get_db
+    with patch("smarthris.api.routers.documents.process_hr_document") as mocked:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents",
+                files={"file": ("policy.txt", b"background scheduling body\n", "text/plain")},
+            )
+        assert response.status_code == 201
+        mocked.assert_called_once()
+
+
+def test_reindex_endpoint_schedules_processing(
+    db_session: Session,
+    integration_database_url: str,
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url=integration_database_url,
+        rag_document_dir=str(tmp_path / "documents"),
+        max_upload_bytes=1024,
+    )
+    app = create_app(settings)
+
+    def override_get_db():
+        try:
+            yield db_session
+        except Exception:
+            db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = override_get_db
+    with patch("smarthris.api.routers.documents.process_hr_document") as mocked:
+        with TestClient(app) as client:
+            created = client.post(
+                "/documents",
+                files={"file": ("policy.txt", b"reindex body\n", "text/plain")},
+            ).json()
+            mocked.reset_mock()
+            response = client.post(f"/documents/{created['id']}/reindex")
+        assert response.status_code == 200
+        mocked.assert_called_once()
 
 
 def test_get_document_by_id_and_unknown(

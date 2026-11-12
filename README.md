@@ -76,6 +76,8 @@ smarthris-api
 uvicorn smarthris.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+HR document upload runs background indexing against on-disk FAISS. Use a **single API worker** only (default for `smarthris-api` and `uvicorn` without `--workers`). Do not run `uvicorn ... --workers 2` (or more) with document indexing enabled—the FAISS update lock is process-local and cannot serialize across workers. See `src/smarthris/rag/faiss_store.py`.
+
 Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for OpenAPI UI.
 
 ### Health check
