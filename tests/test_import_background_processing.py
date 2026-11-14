@@ -21,6 +21,8 @@ from smarthris.services.import_processing_service import (
     ImportProcessingService,
     process_import_job,
 )
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override, create_test_user
+from smarthris.models.user import UserRole
 
 
 class _TrackingSessionFactory:
@@ -338,8 +340,10 @@ def test_upload_schedules_background_task(
         database_url=integration_database_url,
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=50_000,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
+    hr_user = create_test_user(db_session, role=UserRole.HR)
 
     def override_get_db():
         try:
@@ -349,6 +353,7 @@ def test_upload_schedules_background_task(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
 
     with patch(
         "smarthris.api.routers.imports.process_import_job",
@@ -387,8 +392,10 @@ def test_employee_api_unaffected(
         _env_file=None,
         database_url=integration_database_url,
         import_temp_dir=str(tmp_path / "imports"),
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
+    hr_user = create_test_user(db_session, role=UserRole.HR)
 
     def override_get_db():
         try:
@@ -398,6 +405,7 @@ def test_employee_api_unaffected(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
     with TestClient(app) as client:
         response = client.post(
             "/employees",

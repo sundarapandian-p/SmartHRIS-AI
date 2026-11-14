@@ -85,8 +85,10 @@ class RecordingClient:
 
 def _run_page(api_client=None) -> AppTest:
     def _script(client=None) -> None:
+        from streamlit_app.auth import enable_page_guard_bypass_for_tests
         from streamlit_app.pages.employees import render as render_employees
 
+        enable_page_guard_bypass_for_tests()
         render_employees(api_client=client)
 
     return AppTest.from_function(

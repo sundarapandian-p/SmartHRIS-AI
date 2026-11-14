@@ -22,6 +22,8 @@ from smarthris.importing.storage import (
 from smarthris.main import create_app
 from smarthris.models.import_job import ImportJobStatus
 from smarthris.repositories.import_job_repository import ImportJobRepository
+from smarthris.models.user import UserRole
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override, create_test_user
 
 
 @pytest.fixture
@@ -29,6 +31,7 @@ def import_api_client(
     db_session: Session,
     integration_database_url: str,
     tmp_path: Path,
+    hr_test_user,
 ) -> TestClient:
     """API client with isolated import temp dir under pytest tmp_path."""
     settings = Settings(
@@ -37,6 +40,7 @@ def import_api_client(
         database_url=integration_database_url,
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=1024,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -48,6 +52,7 @@ def import_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -233,11 +238,13 @@ def test_db_failure_removes_stored_file_and_rolls_back(
     integration_database_url: str,
     tmp_path: Path,
 ) -> None:
+    hr_user = create_test_user(db_session, role=UserRole.HR)
     settings = Settings(
         _env_file=None,
         database_url=integration_database_url,
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=10_000,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -249,6 +256,7 @@ def test_db_failure_removes_stored_file_and_rolls_back(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
 
     with TestClient(app, raise_server_exceptions=False) as client:
         with patch(

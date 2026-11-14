@@ -24,6 +24,13 @@ class HrDocumentType(str, enum.Enum):
     OTHER = "other"
 
 
+class HrDocumentVisibility(str, enum.Enum):
+    """Who may retrieve indexed content from this document."""
+
+    HR_ONLY = "hr_only"
+    ALL_STAFF = "all_staff"
+
+
 class HrDocumentStatus(str, enum.Enum):
     """Indexing pipeline status for an HR document."""
 
@@ -51,6 +58,12 @@ class HrDocument(Base):
     doc_type: Mapped[HrDocumentType] = mapped_column(
         Enum(HrDocumentType, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
+    )
+    visibility: Mapped[HrDocumentVisibility] = mapped_column(
+        Enum(HrDocumentVisibility, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=HrDocumentVisibility.HR_ONLY,
+        server_default=HrDocumentVisibility.HR_ONLY.value,
     )
     status: Mapped[HrDocumentStatus] = mapped_column(
         Enum(HrDocumentStatus, values_callable=lambda obj: [e.value for e in obj]),

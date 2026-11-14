@@ -3,9 +3,12 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from smarthris.api.deps import get_db
+from smarthris.api.deps import RequireHrOrAdmin, get_current_active_user, get_db
+from smarthris.core.access import allowed_document_visibilities
+from smarthris.models.hr_document import HrDocumentType, HrDocumentVisibility
+from smarthris.models.user import User
 from smarthris.config import Settings
-from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import HrDocumentStatus
 from smarthris.schemas.hr_document import (
     HrDocumentListResponse,
     HrDocumentRead,
@@ -54,6 +57,8 @@ def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(None),
     doc_type: HrDocumentType | None = Form(None),
+    visibility: HrDocumentVisibility | None = Form(None),
+    _actor: User = Depends(RequireHrOrAdmin),
     service: HrDocumentService = Depends(get_hr_document_service),
 ) -> HrDocumentRead:
     """
@@ -62,7 +67,15 @@ def upload_document(
     Schedules background extraction, chunking, and indexing. Does not return
     file contents or storage paths.
     """
-    result = service.create_from_upload(upload=file, title=title, doc_type=doc_type)
+    resolved_visibility = (
+        visibility if visibility is not None else HrDocumentVisibility.HR_ONLY
+    )
+    result = service.create_from_upload(
+        upload=file,
+        title=title,
+        doc_type=doc_type,
+        visibility=resolved_visibility,
+    )
     _schedule_document_processing(
         background_tasks=background_tasks,
         request=request,
@@ -77,6 +90,7 @@ def list_documents(
     page_size: int = Query(20, ge=1, le=100),
     doc_type: HrDocumentType | None = None,
     status: HrDocumentStatus | None = None,
+    _actor: User = Depends(RequireHrOrAdmin),
     service: HrDocumentService = Depends(get_hr_document_service),
 ) -> HrDocumentListResponse:
     return service.list(
@@ -92,6 +106,7 @@ def search_documents(
     payload: HrDocumentSearchRequest,
     request: Request,
     db: Session = Depends(get_db),
+    actor: User = Depends(get_current_active_user),
 ) -> HrDocumentSearchResponse:
     """
     Search indexed document chunks (semantic, keyword, or hybrid).
@@ -100,12 +115,18 @@ def search_documents(
     semantics, HTTP 422 vs 400, single-worker requirement, and in-memory index lag.
     """
     settings = get_settings_from_app(request)
-    return HrDocumentRetrievalService(db, settings).search(payload)
+    visibilities = allowed_document_visibilities(actor)
+    return HrDocumentRetrievalService(
+        db,
+        settings,
+        allowed_visibilities=visibilities,
+    ).search(payload)
 
 
 @router.get("/{document_id}", response_model=HrDocumentRead)
 def get_document(
     document_id: str,
+    _actor: User = Depends(RequireHrOrAdmin),
     service: HrDocumentService = Depends(get_hr_document_service),
 ) -> HrDocumentRead:
     return service.get(document_id)
@@ -117,6 +138,7 @@ def reindex_document(
     background_tasks: BackgroundTasks,
     request: Request,
     db: Session = Depends(get_db),
+    _actor: User = Depends(RequireHrOrAdmin),
     service: HrDocumentService = Depends(get_hr_document_service),
 ) -> HrDocumentRead:
     """Re-run extraction and indexing for failed or previously indexed documents."""

@@ -14,7 +14,12 @@ from smarthris.api.deps import get_db
 from smarthris.config import Settings
 from smarthris.core.exceptions import ValidationError
 from smarthris.main import create_app
-from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import (
+    HrDocument,
+    HrDocumentStatus,
+    HrDocumentType,
+    HrDocumentVisibility,
+)
 from smarthris.models.hr_document_chunk import HrDocumentChunk
 from smarthris.rag.embeddings import DocumentProcessingError, reset_embedding_cache_for_tests
 from smarthris.rag.bm25_store import reset_bm25_cache_for_tests
@@ -26,7 +31,12 @@ from smarthris.repositories.hr_document_repository import HrDocumentRepository
 from smarthris.schemas.hr_document import HrDocumentSearchRequest
 from smarthris.services.hr_document_retrieval_service import HrDocumentRetrievalService
 
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 from tests.test_hr_document_processing import MockEncoder, _settings
+
+ALL_DOCUMENT_VISIBILITIES = frozenset(
+    {HrDocumentVisibility.HR_ONLY, HrDocumentVisibility.ALL_STAFF}
+)
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +80,7 @@ def _seed_indexed_chunk(
     doc_type: HrDocumentType = HrDocumentType.POLICY,
     title: str | None = "Policy Title",
     storage_path: str = "/private/policy.txt",
+    visibility: HrDocumentVisibility = HrDocumentVisibility.HR_ONLY,
 ) -> None:
     HrDocumentRepository(db_session).add(
         HrDocument(
@@ -80,6 +91,7 @@ def _seed_indexed_chunk(
             storage_path=storage_path,
             title=title,
             doc_type=doc_type,
+            visibility=visibility,
             status=status,
         )
     )
@@ -101,6 +113,7 @@ def search_api_client(
     db_session: Session,
     integration_database_url: str,
     tmp_path,
+    hr_test_user,
 ) -> TestClient:
     settings = Settings(
         _env_file=None,
@@ -111,6 +124,7 @@ def search_api_client(
         rag_top_k=5,
         max_upload_bytes=1024,
         embedding_model_name="unit-test-model",
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -122,6 +136,7 @@ def search_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
 
     def _encode(texts, *, settings, provider=None, batch_size=32):
         encoder = provider or MockEncoder()
@@ -236,6 +251,7 @@ def test_retrieval_stale_chunk_ids(db_session: Session, tmp_path) -> None:
         db_session,
         settings,
         embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
     )
     response = service.search(HrDocumentSearchRequest(query="probe"))
     assert response.index_ready is True
@@ -252,7 +268,12 @@ def test_retrieval_title_fallback(db_session: Session, tmp_path) -> None:
         chunk_text="carryover text",
         title=None,
     )
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     with patch(
         "smarthris.services.hr_document_retrieval_service.search_chunks_by_vector",
         return_value=(True, [type("Hit", (), {"chunk_id": 301, "score": 0.88})()]),
@@ -263,14 +284,24 @@ def test_retrieval_title_fallback(db_session: Session, tmp_path) -> None:
 
 def test_retrieval_query_validation(db_session: Session, tmp_path) -> None:
     settings = _settings_search(tmp_path)
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     with pytest.raises(ValidationError, match="must not be empty"):
         service.search(HrDocumentSearchRequest(query="   "))
 
 
 def test_retrieval_top_k_validation(db_session: Session, tmp_path) -> None:
     settings = _settings_search(tmp_path)
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     payload = HrDocumentSearchRequest.model_construct(query="ok", top_k=21, doc_type=None)
     with pytest.raises(ValidationError, match="top_k must be between"):
         service.search(payload)
@@ -278,7 +309,12 @@ def test_retrieval_top_k_validation(db_session: Session, tmp_path) -> None:
 
 def test_retrieval_missing_index(db_session: Session, tmp_path) -> None:
     settings = _settings_search(tmp_path)
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(HrDocumentSearchRequest(query="anything"))
     assert response.index_ready is False
     assert response.items == []
@@ -290,6 +326,7 @@ def test_retrieval_embedding_failure(db_session: Session, tmp_path) -> None:
         db_session,
         settings,
         embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
     )
     with patch(
         "smarthris.services.hr_document_retrieval_service.encode_texts",
@@ -297,6 +334,33 @@ def test_retrieval_embedding_failure(db_session: Session, tmp_path) -> None:
     ):
         with pytest.raises(ValidationError, match="temporarily unavailable"):
             service.search(HrDocumentSearchRequest(query="fail"))
+
+
+def test_retrieval_fail_closed_without_visibility_allowlist(
+    db_session: Session,
+    tmp_path,
+) -> None:
+    chunk_text = "secret HR compensation grid"
+    _seed_indexed_chunk(
+        db_session,
+        doc_id="00000000-0000-4000-8000-000000009901",
+        chunk_id=9901,
+        chunk_text=chunk_text,
+        visibility=HrDocumentVisibility.HR_ONLY,
+    )
+    settings = _build_index(tmp_path, [ChunkVectorRecord(chunk_id=9901, chunk_text=chunk_text)])
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+    )
+    with patch(
+        "smarthris.services.hr_document_retrieval_service.search_chunks_by_vector",
+        return_value=(True, [type("Hit", (), {"chunk_id": 9901, "score": 0.99})()]),
+    ):
+        response = service.search(HrDocumentSearchRequest(query="compensation"))
+    assert response.index_ready is True
+    assert response.items == []
 
 
 def test_retrieval_end_to_end(db_session: Session, tmp_path) -> None:
@@ -312,7 +376,12 @@ def test_retrieval_end_to_end(db_session: Session, tmp_path) -> None:
     settings = _build_index(tmp_path, [ChunkVectorRecord(chunk_id=501, chunk_text=chunk_text)])
 
     encoder = MockEncoder()
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=encoder)
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=encoder,
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(HrDocumentSearchRequest(query="carryover"))
     assert response.index_ready is True
     assert len(response.items) == 1

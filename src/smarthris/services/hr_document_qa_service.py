@@ -15,6 +15,7 @@ from smarthris.schemas.rag import (
     RagQueryResponse,
     RagQuerySourceItem,
 )
+from smarthris.models.hr_document import HrDocumentVisibility
 from smarthris.services.hr_document_retrieval_service import HrDocumentRetrievalService
 
 _MAX_QUESTION_LENGTH = 2000
@@ -46,6 +47,7 @@ class HrDocumentQaService:
         embedding_provider: EmbeddingProvider | None = None,
         ollama_client: OllamaChatClient | None = None,
         retrieval_service: HrDocumentRetrievalService | None = None,
+        allowed_visibilities: frozenset[HrDocumentVisibility] | None = None,
     ) -> None:
         self._session = session
         self._settings = settings
@@ -55,6 +57,7 @@ class HrDocumentQaService:
             session,
             settings,
             embedding_provider=embedding_provider,
+            allowed_visibilities=allowed_visibilities,
         )
 
     def query(self, payload: RagQueryRequest) -> RagQueryResponse:

@@ -1,5 +1,7 @@
 """Shared pytest fixtures."""
 
+pytest_plugins = ["tests.auth_helpers"]
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -11,6 +13,7 @@ from smarthris.db.session import create_db_engine, create_session_factory, verif
 from smarthris.main import create_app
 from smarthris.performance.gate import PERFORMANCE_ENV_VAR, performance_runs_enabled
 from smarthris.repositories.department_repository import DepartmentRepository
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 from tests.test_db_guard import assert_safe_integration_database_url
 
 
@@ -91,12 +94,17 @@ def db_session(integration_engine) -> Session:
 
 
 @pytest.fixture
-def api_client(db_session: Session, integration_database_url: str) -> TestClient:
+def api_client(
+    db_session: Session,
+    integration_database_url: str,
+    hr_test_user,
+) -> TestClient:
     """API client using the integration DB session (employee tests)."""
     settings = Settings(
         _env_file=None,
         app_name="SmartHRIS-Integration",
         database_url=integration_database_url,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -108,6 +116,7 @@ def api_client(db_session: Session, integration_database_url: str) -> TestClient
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -120,6 +129,18 @@ def sample_department(db_session: Session):
     department = repo.create("Engineering", description="Product engineering")
     db_session.flush()
     return department
+
+
+@pytest.fixture(autouse=True)
+def _streamlit_page_guard_test_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enable Streamlit page-guard test mode only for test_streamlit_* modules."""
+    nodeid = request.node.nodeid.replace("\\", "/")
+    if "/test_streamlit" not in nodeid:
+        return
+    from streamlit_app.constants import ENV_PAGE_GUARD_TEST
+
+    monkeypatch.setenv(ENV_PAGE_GUARD_TEST, "1")
+    monkeypatch.setenv("APP_ENV", "development")
 
 
 def post_employee(client: TestClient, department_id: int, **fields) -> dict:

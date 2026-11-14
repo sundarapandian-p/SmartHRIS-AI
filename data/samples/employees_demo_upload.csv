@@ -1,0 +1,4 @@
+Employee Number,First Name,Last Name,Work Email,Department ID,Department Name,Job Role,Job Title,Manager Employee Number,Hire Date,Status
+HR-DEMO-001,Priya,Sharma,priya.sharma@example.com,1,,HR Specialist,People Operations,,2024-03-01,active
+HR-DEMO-002,Arjun,Mehta,arjun.mehta@example.com,1,,Software Engineer,Backend Developer,,2024-06-15,active
+HR-DEMO-003,Neha,Kapoor,neha.kapoor@example.com,2,,Analyst,HR Analyst,HR-DEMO-001,2025-01-10,active

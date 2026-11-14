@@ -28,6 +28,7 @@ from smarthris.schemas.hr_document import (
 from smarthris.schemas.rag import RagAnswerStatus, RagQueryRequest
 from smarthris.services.hr_document_qa_service import HrDocumentQaService
 
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 from tests.test_hr_document_search import (
     _build_index,
     _seed_indexed_chunk,
@@ -367,6 +368,7 @@ def rag_api_client(
     db_session: Session,
     integration_database_url: str,
     tmp_path,
+    hr_test_user,
 ) -> TestClient:
     settings = Settings(
         _env_file=None,
@@ -376,6 +378,7 @@ def rag_api_client(
         rag_index_dir=str(tmp_path / "indexes"),
         rag_top_k=5,
         embedding_model_name="unit-test-model",
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -386,6 +389,7 @@ def rag_api_client(
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
 
     def _encode(texts, *, settings, provider=None, batch_size=32):
         encoder = provider or MockEncoder()

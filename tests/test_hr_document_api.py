@@ -20,6 +20,8 @@ from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumen
 from smarthris.repositories.hr_document_repository import HrDocumentRepository
 from smarthris.schemas.hr_document import HrDocumentRead
 from smarthris.services.hr_document_service import HrDocumentService
+from smarthris.models.user import UserRole
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override, create_test_user
 
 
 @pytest.fixture
@@ -27,6 +29,7 @@ def documents_api_client(
     db_session: Session,
     integration_database_url: str,
     tmp_path: Path,
+    hr_test_user,
 ) -> TestClient:
     """API client with isolated private document directory."""
     settings = Settings(
@@ -35,6 +38,7 @@ def documents_api_client(
         database_url=integration_database_url,
         rag_document_dir=str(tmp_path / "documents"),
         max_upload_bytes=1024,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -46,6 +50,7 @@ def documents_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with patch("smarthris.api.routers.documents.process_hr_document"):
         with TestClient(app) as test_client:
             yield test_client
@@ -332,12 +337,14 @@ def test_upload_schedules_background_processing(
     integration_database_url: str,
     tmp_path: Path,
 ) -> None:
+    hr_user = create_test_user(db_session, role=UserRole.HR)
     settings = Settings(
         _env_file=None,
         app_name="SmartHRIS-Documents-Schedule",
         database_url=integration_database_url,
         rag_document_dir=str(tmp_path / "documents"),
         max_upload_bytes=1024,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -349,6 +356,7 @@ def test_upload_schedules_background_processing(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
     with patch("smarthris.api.routers.documents.process_hr_document") as mocked:
         with TestClient(app) as client:
             response = client.post(
@@ -364,11 +372,13 @@ def test_reindex_endpoint_schedules_processing(
     integration_database_url: str,
     tmp_path: Path,
 ) -> None:
+    hr_user = create_test_user(db_session, role=UserRole.HR)
     settings = Settings(
         _env_file=None,
         database_url=integration_database_url,
         rag_document_dir=str(tmp_path / "documents"),
         max_upload_bytes=1024,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -380,6 +390,7 @@ def test_reindex_endpoint_schedules_processing(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
     with patch("smarthris.api.routers.documents.process_hr_document") as mocked:
         with TestClient(app) as client:
             created = client.post(
@@ -419,12 +430,14 @@ def test_api_db_failure_does_not_leave_orphan(
     integration_database_url: str,
     tmp_path: Path,
 ) -> None:
+    hr_user = create_test_user(db_session, role=UserRole.HR)
     settings = Settings(
         _env_file=None,
         app_name="SmartHRIS-Documents-Orphan",
         database_url=integration_database_url,
         rag_document_dir=str(tmp_path / "documents"),
         max_upload_bytes=1024,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -436,6 +449,7 @@ def test_api_db_failure_does_not_leave_orphan(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
     with TestClient(app, raise_server_exceptions=False) as client:
         with patch.object(db_session, "commit", side_effect=RuntimeError("db down")):
             response = client.post(

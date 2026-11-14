@@ -162,6 +162,9 @@ def render_turn(turn: ChatTurn, *, index: int) -> None:
 
 
 def render(*, api_client: SmartHrisApiClient | None = None) -> None:
+    from streamlit_app.auth import get_api_client, require_page_access
+
+    require_page_access("hr_document_qa")
     st.title(NAV_HR_DOCUMENT_QA)
     st.caption(
         "Ask questions based on indexed HR documents. Answers use the FastAPI "
@@ -169,7 +172,7 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
         "remain API-only in this phase."
     )
 
-    client = api_client or SmartHrisApiClient()
+    client = api_client or get_api_client()
 
     if SESSION_CHAT_HISTORY not in st.session_state:
         st.session_state[SESSION_CHAT_HISTORY] = []

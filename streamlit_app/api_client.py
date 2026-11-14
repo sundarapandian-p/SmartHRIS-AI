@@ -7,13 +7,14 @@ maps responses to the existing Pydantic API contracts.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, BinaryIO
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from smarthris.schemas.employee import EmployeeListResponse, EmployeeSortField, SortOrder
+from smarthris.schemas.auth import CurrentUserResponse, TokenResponse
+from smarthris.schemas.employee import EmployeeListResponse, EmployeeRead, EmployeeSortField, SortOrder
 from smarthris.schemas.rag import RagQueryResponse
 from smarthris.schemas.health import HealthResponse
 from smarthris.schemas.import_job import ImportErrorListResponse, ImportJobRead
@@ -70,6 +71,8 @@ class SmartHrisApiClient:
         timeout: float | httpx.Timeout = DEFAULT_TIMEOUT,
         upload_timeout: float | httpx.Timeout = UPLOAD_TIMEOUT,
         transport: httpx.BaseTransport | None = None,
+        access_token: str | None = None,
+        on_unauthorized: Callable[[], None] | None = None,
     ) -> None:
         resolved = (base_url or os.environ.get("API_BASE_URL") or DEFAULT_API_BASE_URL).rstrip(
             "/"
@@ -78,6 +81,16 @@ class SmartHrisApiClient:
         self.timeout = timeout
         self.upload_timeout = upload_timeout
         self._transport = transport
+        self._access_token = access_token
+        self._on_unauthorized = on_unauthorized
+
+    def set_access_token(self, token: str | None) -> None:
+        self._access_token = token.strip() if token else None
+
+    def _authorization_header(self, *, authenticate: bool) -> dict[str, str]:
+        if not authenticate or not self._access_token:
+            return {}
+        return {"Authorization": f"Bearer {self._access_token}"}
 
     def _client(self, *, timeout: float | httpx.Timeout | None = None) -> httpx.Client:
         return httpx.Client(
@@ -139,9 +152,16 @@ class SmartHrisApiClient:
 
         return cls._fallback_message(response.status_code), code
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    def _raise_for_status(
+        self,
+        response: httpx.Response,
+        *,
+        authenticate: bool,
+    ) -> None:
         if response.status_code < 400:
             return
+        if response.status_code == 401 and authenticate and self._on_unauthorized is not None:
+            self._on_unauthorized()
         message, code = self._parse_error_payload(response)
         raise ApiError(message, status_code=response.status_code, code=code)
 
@@ -156,7 +176,9 @@ class SmartHrisApiClient:
         files: Any = None,
         timeout: float | httpx.Timeout | None = None,
         expected_status: int | set[int] | None = None,
+        authenticate: bool = True,
     ) -> dict[str, Any]:
+        headers = self._authorization_header(authenticate=authenticate)
         try:
             with self._client(timeout=timeout) as client:
                 response = client.request(
@@ -166,6 +188,7 @@ class SmartHrisApiClient:
                     data=data,
                     json=json,
                     files=files,
+                    headers=headers or None,
                 )
         except httpx.TimeoutException as exc:
             raise ApiError(
@@ -177,7 +200,7 @@ class SmartHrisApiClient:
                 "Confirm the backend is running and API_BASE_URL is correct.",
             ) from exc
 
-        self._raise_for_status(response)
+        self._raise_for_status(response, authenticate=authenticate)
 
         if expected_status is not None:
             allowed = (
@@ -223,13 +246,39 @@ class SmartHrisApiClient:
                 status_code=status_code,
             ) from exc
 
+    def login(self, email: str, password: str) -> TokenResponse:
+        """POST /auth/login (unauthenticated)."""
+        payload = self._request_json(
+            "POST",
+            "/auth/login",
+            json={"email": email, "password": password},
+            expected_status=200,
+            authenticate=False,
+        )
+        return self._validate_model(TokenResponse, payload, status_code=200)
+
+    def get_current_user(self) -> CurrentUserResponse:
+        """GET /auth/me."""
+        payload = self._request_json(
+            "GET",
+            "/auth/me",
+            expected_status=200,
+            authenticate=True,
+        )
+        return self._validate_model(CurrentUserResponse, payload, status_code=200)
+
     def get_health(self) -> dict[str, Any]:
         """GET /health — used by the Dashboard connectivity check.
 
         Returns a plain dict so existing Streamlit dashboard code can call
         ``st.json(health)`` without changes.
         """
-        payload = self._request_json("GET", "/health", expected_status=200)
+        payload = self._request_json(
+            "GET",
+            "/health",
+            expected_status=200,
+            authenticate=False,
+        )
         return self._validate_model(HealthResponse, payload, status_code=200).model_dump(
             mode="json"
         )
@@ -269,6 +318,15 @@ class SmartHrisApiClient:
         )
         payload = self._request_json("GET", "/employees", params=params, expected_status=200)
         return self._validate_model(EmployeeListResponse, payload, status_code=200)
+
+    def get_employee(self, employee_id: int) -> EmployeeRead:
+        """GET /employees/{employee_id} — self-scope enforced on API."""
+        payload = self._request_json(
+            "GET",
+            f"/employees/{employee_id}",
+            expected_status=200,
+        )
+        return self._validate_model(EmployeeRead, payload, status_code=200)
 
     def upload_import(
         self,

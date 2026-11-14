@@ -16,6 +16,9 @@ def test_streamlit_app_layout_exists() -> None:
     assert (pages / "bulk_import.py").is_file()
     assert (pages / "lms_analytics.py").is_file()
     assert (pages / "hr_document_qa.py").is_file()
+    assert (pages / "login.py").is_file()
+    assert (pages / "my_profile.py").is_file()
+    assert (root / "auth.py").is_file()
 
 
 def test_app_entrypoint_mentions_expected_startup() -> None:
@@ -23,9 +26,12 @@ def test_app_entrypoint_mentions_expected_startup() -> None:
         encoding="utf-8"
     )
     assert "streamlit run streamlit_app/app.py" in text
-    assert "NAV_DASHBOARD" in text
-    assert "NAV_EMPLOYEES" in text
-    assert "NAV_BULK_IMPORT" in text
-    assert "NAV_LMS_ANALYTICS" in text
-    assert "NAV_HR_DOCUMENT_QA" in text
-    assert "hr_document_qa.py" in text
+    assert "allowed_nav_titles" in text
+    assert "nav_page_specs" in text
+    assert "is_authenticated" in text
+    assert "login.py" in text
+    assert "nav_page_specs" in text
+    assert "default=(index == 0)" in text
+    assert ".default" not in text.replace("default=True", "").replace("default=False", "").replace(
+        "default=(index == 0)", ""
+    )

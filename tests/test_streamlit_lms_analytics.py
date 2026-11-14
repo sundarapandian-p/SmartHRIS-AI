@@ -173,8 +173,10 @@ class RecordingAnalyticsClient:
 
 def _run_page(api_client=None) -> AppTest:
     def _script(client=None) -> None:
+        from streamlit_app.auth import enable_page_guard_bypass_for_tests
         from streamlit_app.pages.lms_analytics import render as render_lms
 
+        enable_page_guard_bypass_for_tests()
         render_lms(api_client=client)
 
     return AppTest.from_function(

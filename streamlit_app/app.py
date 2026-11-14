@@ -11,13 +11,18 @@ from pathlib import Path
 
 import streamlit as st
 
+from streamlit_app.auth import (
+    allowed_nav_titles,
+    apply_pending_login_rerun,
+    current_role,
+    is_authenticated,
+    maybe_refresh_authenticated_profile,
+    nav_page_specs,
+    render_sidebar_user_block,
+)
 from streamlit_app.constants import (
     APP_TITLE,
-    NAV_BULK_IMPORT,
-    NAV_DASHBOARD,
-    NAV_EMPLOYEES,
-    NAV_HR_DOCUMENT_QA,
-    NAV_LMS_ANALYTICS,
+    NAV_LOGIN,
 )
 
 PAGES_DIR = Path(__file__).resolve().parent / "pages"
@@ -28,36 +33,45 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-dashboard_page = st.Page(
-    PAGES_DIR / "dashboard.py",
-    title=NAV_DASHBOARD,
-    default=True,
-)
-employees_page = st.Page(
-    PAGES_DIR / "employees.py",
-    title=NAV_EMPLOYEES,
-)
-bulk_import_page = st.Page(
-    PAGES_DIR / "bulk_import.py",
-    title=NAV_BULK_IMPORT,
-)
-lms_analytics_page = st.Page(
-    PAGES_DIR / "lms_analytics.py",
-    title=NAV_LMS_ANALYTICS,
-)
-hr_document_qa_page = st.Page(
-    PAGES_DIR / "hr_document_qa.py",
-    title=NAV_HR_DOCUMENT_QA,
-)
+apply_pending_login_rerun()
 
-navigation = st.navigation(
-    [
-        dashboard_page,
-        employees_page,
-        bulk_import_page,
-        lms_analytics_page,
-        hr_document_qa_page,
-    ],
-    position="sidebar",
-)
-navigation.run()
+if not is_authenticated():
+    login_page = st.Page(
+        PAGES_DIR / "login.py",
+        title=NAV_LOGIN,
+        default=True,
+    )
+    st.navigation([login_page], position="sidebar").run()
+else:
+    maybe_refresh_authenticated_profile()
+    apply_pending_login_rerun()
+    if not is_authenticated():
+        login_page = st.Page(
+            PAGES_DIR / "login.py",
+            title=NAV_LOGIN,
+            default=True,
+        )
+        st.navigation([login_page], position="sidebar").run()
+        st.stop()
+    render_sidebar_user_block()
+    role = current_role()
+    allowed = allowed_nav_titles(role)
+
+    specs = nav_page_specs(allowed, PAGES_DIR)
+    if not specs:
+        st.error("No pages are available for your role.")
+        st.stop()
+
+    all_pages: list[tuple[str, st.Page]] = [
+        (
+            module_key,
+            st.Page(
+                script_path,
+                title=title,
+                default=(index == 0),
+            ),
+        )
+        for index, (module_key, script_path, title) in enumerate(specs)
+    ]
+
+    st.navigation([page for _, page in all_pages], position="sidebar").run()

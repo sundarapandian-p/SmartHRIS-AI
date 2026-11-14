@@ -24,6 +24,7 @@ from smarthris.repositories.employee_repository import EmployeeRepository
 from smarthris.repositories.import_error_repository import ImportErrorRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
 from smarthris.services.import_processing_service import ImportProcessingService
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 from tests.test_import_background_processing import _TrackingSessionFactory
 
 
@@ -71,6 +72,7 @@ def import_api_client(
     db_session: Session,
     integration_database_url: str,
     tmp_path: Path,
+    hr_test_user,
 ) -> TestClient:
     settings = Settings(
         _env_file=None,
@@ -79,6 +81,7 @@ def import_api_client(
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=200_000,
         import_batch_size=50,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -90,6 +93,7 @@ def import_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()

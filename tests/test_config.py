@@ -94,3 +94,23 @@ def test_rag_retrieval_candidates_bounds() -> None:
         Settings(_env_file=None, rag_retrieval_candidates=0)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, rag_retrieval_candidates=201)
+
+
+def test_jwt_settings_defaults_and_overrides() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.jwt_secret_key == ""
+    assert settings.jwt_algorithm == "HS256"
+    assert settings.jwt_access_token_expire_minutes == 60
+
+    settings = Settings(
+        _env_file=None,
+        jwt_secret_key="override-secret-32-characters-minimum",
+        jwt_algorithm="HS256",
+        jwt_access_token_expire_minutes=15,
+    )
+    assert settings.jwt_access_token_expire_minutes == 15
+
+
+def test_jwt_algorithm_rejects_unsupported_values() -> None:
+    with pytest.raises(ValidationError, match="HS256"):
+        Settings(_env_file=None, jwt_algorithm="RS256")

@@ -3,8 +3,10 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+JWT_ALGORITHM = "HS256"
 
 from smarthris.rag.config import (
     DEFAULT_EMBEDDING_MODEL_NAME,
@@ -127,6 +129,34 @@ class Settings(BaseSettings):
         description="Reciprocal Rank Fusion constant k.",
         ge=1,
         le=1000,
+    )
+
+    jwt_secret_key: str = Field(
+        default="",
+        validation_alias="JWT_SECRET_KEY",
+        description="HMAC secret for signing JWT access tokens (min 32 characters).",
+    )
+    jwt_algorithm: Literal["HS256"] = Field(
+        default="HS256",
+        validation_alias="JWT_ALGORITHM",
+        description="JWT signing algorithm (only HS256 is supported).",
+    )
+
+    @field_validator("jwt_algorithm", mode="before")
+    @classmethod
+    def _normalize_jwt_algorithm(cls, value: object) -> str:
+        if value is None:
+            return JWT_ALGORITHM
+        text = str(value).strip().upper()
+        if text != JWT_ALGORITHM:
+            raise ValueError(f"Only {JWT_ALGORITHM} is supported for JWT_ALGORITHM")
+        return JWT_ALGORITHM
+    jwt_access_token_expire_minutes: int = Field(
+        default=60,
+        validation_alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
+        description="Access token lifetime in minutes.",
+        ge=1,
+        le=24 * 60,
     )
 
     @computed_field  # type: ignore[prop-decorator]

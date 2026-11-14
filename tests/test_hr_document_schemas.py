@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import (
+    HrDocument,
+    HrDocumentStatus,
+    HrDocumentType,
+    HrDocumentVisibility,
+)
 from smarthris.models.hr_document_chunk import HrDocumentChunk
 from smarthris.schemas.hr_document import (
     HrDocumentChunkCreate,
@@ -46,6 +51,7 @@ def test_document_read_excludes_storage_path() -> None:
         storage_path="/secret/absolute/path/policy.txt",
         title=None,
         doc_type=HrDocumentType.POLICY,
+        visibility=HrDocumentVisibility.HR_ONLY,
         status=HrDocumentStatus.PENDING,
         uploaded_at=datetime.now(timezone.utc),
         indexed_at=None,

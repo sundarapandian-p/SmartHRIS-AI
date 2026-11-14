@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType, HrDocumentVisibility
 
 
 class HrDocumentRetrievalMode(str, enum.Enum):
@@ -37,6 +37,7 @@ class HrDocumentRead(BaseModel):
     checksum: str
     title: str | None
     doc_type: HrDocumentType
+    visibility: HrDocumentVisibility
     status: HrDocumentStatus
     uploaded_at: datetime
     indexed_at: datetime | None

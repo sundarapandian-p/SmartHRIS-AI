@@ -5,7 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from smarthris.api.deps import get_db
+from smarthris.api.deps import RequireHrOrAdmin, get_db
 from smarthris.models.course import CourseStatus
 from smarthris.models.course_enrolment import CourseEnrolmentStatus
 from smarthris.models.employee import EmployeeStatus
@@ -22,7 +22,11 @@ from smarthris.schemas.lms_analytics import (
 )
 from smarthris.services.lms_analytics_service import LmsAnalyticsService
 
-router = APIRouter(prefix="/analytics/lms", tags=["lms-analytics"])
+router = APIRouter(
+    prefix="/analytics/lms",
+    tags=["lms-analytics"],
+    dependencies=[Depends(RequireHrOrAdmin)],
+)
 
 
 def get_lms_analytics_service(db: Session = Depends(get_db)) -> LmsAnalyticsService:

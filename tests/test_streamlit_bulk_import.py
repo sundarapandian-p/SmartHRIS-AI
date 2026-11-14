@@ -178,8 +178,10 @@ def _run_page(api_client=None) -> AppTest:
     """Drive ``render`` via AppTest (function body must be import-complete)."""
 
     def _script(client=None) -> None:
+        from streamlit_app.auth import enable_page_guard_bypass_for_tests
         from streamlit_app.pages.bulk_import import render as render_bulk_import
 
+        enable_page_guard_bypass_for_tests()
         render_bulk_import(api_client=client)
 
     return AppTest.from_function(

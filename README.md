@@ -58,6 +58,10 @@ Copy-Item .env.example .env
 
 Never commit `.env`; only `.env.example` belongs in git.
 
+### Staging deployment
+
+For a **controlled staging** rollout (env template, migration runbook, first-admin provisioning, backups, and smoke tests), see [`docs/staging-deployment.md`](docs/staging-deployment.md) and [`.env.staging.example`](.env.staging.example). Use `APP_ENV=staging`, `DEBUG=false`, a strong `JWT_SECRET_KEY`, and a **single** API worker.
+
 ## 5. Run database migrations
 
 From the project root with the venv activated:
@@ -77,6 +81,63 @@ uvicorn smarthris.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 HR document upload runs background indexing against on-disk FAISS. Use a **single API worker** only (default for `smarthris-api` and `uvicorn` without `--workers`). Do not run `uvicorn ... --workers 2` (or more) with document indexing or **semantic search** enabled—the FAISS/BM25 file locks and the document **indexing pipeline lock** are process-local and cannot serialize across workers or OS processes. See `src/smarthris/rag/faiss_store.py` and `src/smarthris/services/hr_document_processing_service.py`.
+
+### Authentication (Phase 6.1)
+
+Users live in the `users` table (separate from `employees`). Passwords are stored as **bcrypt** hashes only. Login returns a **JWT access token** (HS256) signed with `JWT_SECRET_KEY`.
+
+**Required environment** (see `.env.example`):
+
+- `JWT_SECRET_KEY` — at least 32 characters (generate a long random value; never commit it).
+- `JWT_ALGORITHM` — default `HS256`.
+- `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` — default `60`.
+
+**Endpoints**
+
+- `POST /auth/login` — JSON body `{"email": "...", "password": "..."}` → `access_token`, `token_type`, `expires_in`.
+- `GET /auth/me` — header `Authorization: Bearer <access_token>` → current user profile (role loaded from the database).
+
+Run `alembic upgrade head` after pulling auth migrations so the `users` table exists. Phase **6.2** also requires migration **`20261114_0010`** (`hr_documents.visibility`: `hr_only` | `all_staff`, server default `hr_only`).
+
+**Provisioning administrators** — There is no bootstrap endpoint in Phase 6.1. After migration, create an admin row in MySQL (or a future ops script) with a bcrypt hash of the chosen password—for example using a one-off Python shell that calls `smarthris.core.security.hash_password`. Link `employee_id` when the account represents a specific employee; admin/HR service accounts may leave `employee_id` NULL.
+
+### Authorization and RBAC (Phase 6.2)
+
+Send `Authorization: Bearer <access_token>` on protected routes (except `GET /health` and `POST /auth/login`). Roles are always loaded from the database after JWT validation (`admin`, `hr`, `employee`).
+
+| Area | Admin | HR | Employee |
+|------|-------|----|----------|
+| Employees (list, create, update, hierarchy) | Yes | Yes | **Own record only** (`GET /employees/{id}` when `users.employee_id` matches) |
+| Bulk import (`/imports/*`) | Yes | Yes | Denied |
+| LMS analytics (`/analytics/lms/*`) | Yes | Yes | Denied |
+| Document upload / list / get / reindex | Yes | Yes | Denied |
+| Document search (`POST /documents/search`) | Yes | Yes | **Indexed `all_staff` documents only** |
+| RAG (`POST /rag/query`) | Yes | Yes | **Indexed `all_staff` documents only** |
+
+**Document visibility** — Uploads default to `hr_only`. HR/Admin may set `visibility` on upload (`hr_only` or `all_staff`). Existing rows become `hr_only` via migration default. Semantic, keyword, hybrid retrieval, and RAG **filter by visibility before** chunks are hydrated, cited, or sent to Ollama.
+
+**Employee self-scope** — Employees cannot list colleagues, change org fields, or guess another employee’s id (foreign ids return **404**). Employees without a linked `employee_id` receive **403** on self-service routes.
+
+### Streamlit login (Phase 6.3)
+
+Run the UI from the repo root: `python -m streamlit run streamlit_app/app.py` (with the API up and `JWT_SECRET_KEY` configured).
+
+1. Open the app — you are prompted to **Sign in** (`POST /auth/login`).
+2. The access token is stored only in **Streamlit session state** (not files, URLs, or browser local storage).
+3. Protected API calls send `Authorization: Bearer <token>` via `SmartHrisApiClient`.
+4. **Log out** from the sidebar clears the token and profile; **401** responses also clear the session (expired/invalid token). **403** means “no permission” — you stay signed in.
+5. **Navigation by role** (hiding a page is UX only; the API still enforces RBAC):
+
+| Page | Admin | HR | Employee |
+|------|-------|-----|----------|
+| Dashboard | ✓ | ✓ | ✓ (personal summary) |
+| Employees | ✓ | ✓ | — (use **My Profile**) |
+| My Profile | — | — | ✓ |
+| Bulk Import | ✓ | ✓ | — |
+| LMS Analytics | ✓ | ✓ | — |
+| HR Document Q&A | ✓ | ✓ | ✓ (`all_staff` content via API) |
+
+**Deployment:** apply Alembic migrations **`20261114_0009`** (users) then **`20261114_0010`** (document visibility) before using authenticated Streamlit or API RBAC in a shared environment.
 
 ### HR document search (`POST /documents/search`)
 
@@ -180,7 +241,7 @@ Answers HR policy questions using retrieved document excerpts and a local **Olla
 - **HTTP 200** — answered or deterministic refusal as above.
 - **HTTP 503** — Ollama unreachable, timeout, missing model, or invalid upstream response (`code`: `ollama_unavailable`, `ollama_timeout`, or `ollama_model_error`). Upstream bodies are not exposed.
 
-**Security (development stage)** — There is **no API authentication** on document or RAG routes yet. Treat this as an internal learning tool. Do not log prompts or document excerpts at INFO level in production configurations. Uploaded policies may contain sensitive HR text; citations return short excerpts only, not full chunk bodies or storage paths.
+**Security** — Protected routes reject missing/invalid tokens (**401**), inactive users (**403**), and wrong roles (**403**). Do not log prompts, tokens, or document excerpts at INFO level. Uploaded policies may contain sensitive HR text; citations return short excerpts only, not full chunk bodies or storage paths.
 
 Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for OpenAPI UI.
 
@@ -236,7 +297,7 @@ The **HR Document Q&A** page calls `POST /rag/query` on the FastAPI backend. It 
 - **Refusals** — when indexes are missing (`index_not_ready`) or no relevant chunks are found (`insufficient_context`), the API returns a fixed refusal message without calling Ollama.
 - **Errors** — API **503** usually means Ollama is down, timed out, or the model is missing; **400** / **422** mean validation or retrieval errors.
 
-**Security** — There is no authentication on document or RAG routes yet; treat this as an **internal development** tool. Sensitive policy text may appear in excerpts.
+**Security** — Document and RAG routes require authentication and enforce document visibility (Phase 6.2+). Sensitive policy text may appear in short excerpts in the UI; use staging access controls and HTTPS for shared environments.
 
 ## 8. Run tests
 
@@ -269,7 +330,7 @@ GRANT ALL PRIVILEGES ON smarthris_test.* TO 'smarthris'@'localhost';
 | `streamlit_app/` | Streamlit UI shell (`app.py`, `api_client.py`, `pages/`) |
 | `alembic/` | Migration scripts; `env.py` reads `DATABASE_URL` |
 | `tests/` | pytest (config, health, employee/import API, Streamlit client) |
-| `docs/` | Requirements, architecture, roadmap |
+| `docs/` | Requirements, architecture, roadmap, [`staging-deployment.md`](docs/staging-deployment.md) |
 
 ## Next phase
 

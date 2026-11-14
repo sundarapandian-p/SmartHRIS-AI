@@ -15,6 +15,7 @@ from smarthris.rag.embeddings import (
 )
 from smarthris.rag.faiss_search import search_chunks_by_vector
 from smarthris.rag.rrf import reciprocal_rank_fusion
+from smarthris.models.hr_document import HrDocumentVisibility
 from smarthris.repositories.hr_document_chunk_repository import HrDocumentChunkRepository
 from smarthris.schemas.hr_document import (
     HrDocumentRetrievalMode,
@@ -34,10 +35,13 @@ class HrDocumentRetrievalService:
         settings: Settings,
         *,
         embedding_provider: EmbeddingProvider | None = None,
+        allowed_visibilities: frozenset[HrDocumentVisibility] | None = None,
     ) -> None:
         self._session = session
         self._settings = settings
         self._embedding_provider = embedding_provider
+        self._allowed_visibilities = allowed_visibilities
+        self._chunk_allowlist: frozenset[int] | None = None
 
     def search(self, payload: HrDocumentSearchRequest) -> HrDocumentSearchResponse:
         query = payload.query.strip()
@@ -57,6 +61,8 @@ class HrDocumentRetrievalService:
             raise ValidationError(
                 "rag_retrieval_candidates must be at least as large as top_k",
             )
+
+        self._ensure_chunk_allowlist()
 
         mode = payload.retrieval_mode
 
@@ -107,7 +113,7 @@ class HrDocumentRetrievalService:
                 items=[],
             )
 
-        scored = [(hit.chunk_id, hit.score) for hit in hits]
+        scored = self._filter_scored_hits([(hit.chunk_id, hit.score) for hit in hits])
         items = self._hydrate_items(scored, doc_type=doc_type)
         return HrDocumentSearchResponse(
             query=query,
@@ -140,7 +146,7 @@ class HrDocumentRetrievalService:
                 items=[],
             )
 
-        scored = [(hit.chunk_id, hit.score) for hit in hits]
+        scored = self._filter_scored_hits([(hit.chunk_id, hit.score) for hit in hits])
         items = self._hydrate_items(scored, doc_type=doc_type)
         return HrDocumentSearchResponse(
             query=query,
@@ -178,7 +184,7 @@ class HrDocumentRetrievalService:
                 dimension=dimension,
                 top_k=candidates,
             )
-            semantic_ids = [hit.chunk_id for hit in sem_hits]
+            semantic_ids = self._filter_chunk_ids([hit.chunk_id for hit in sem_hits])
         except DocumentProcessingError:
             semantic_ready = False
 
@@ -188,7 +194,7 @@ class HrDocumentRetrievalService:
                 settings=self._settings,
                 top_k=candidates,
             )
-            keyword_ids = [hit.chunk_id for hit in kw_hits]
+            keyword_ids = self._filter_chunk_ids([hit.chunk_id for hit in kw_hits])
         except DocumentProcessingError:
             keyword_ready = False
 
@@ -214,6 +220,34 @@ class HrDocumentRetrievalService:
             items=items,
         )
 
+    def _effective_visibilities(self) -> frozenset[HrDocumentVisibility]:
+        """Fail closed when no visibility allowlist was provided."""
+        if self._allowed_visibilities is None:
+            return frozenset()
+        return self._allowed_visibilities
+
+    def _ensure_chunk_allowlist(self) -> None:
+        if self._chunk_allowlist is not None:
+            return
+        visibilities = self._effective_visibilities()
+        if not visibilities:
+            self._chunk_allowlist = frozenset()
+            return
+        repo = HrDocumentChunkRepository(self._session)
+        self._chunk_allowlist = repo.indexed_chunk_id_allowlist(
+            visibilities=visibilities,
+        )
+
+    def _filter_chunk_ids(self, chunk_ids: list[int]) -> list[int]:
+        if self._chunk_allowlist is None:
+            return []
+        return [chunk_id for chunk_id in chunk_ids if chunk_id in self._chunk_allowlist]
+
+    def _filter_scored_hits(self, hits: list[tuple[int, float]]) -> list[tuple[int, float]]:
+        if self._chunk_allowlist is None:
+            return []
+        return [(cid, score) for cid, score in hits if cid in self._chunk_allowlist]
+
     def _hydrate_items(
         self,
         ranked_scores: list[tuple[int, float]],
@@ -224,9 +258,11 @@ class HrDocumentRetrievalService:
             return []
 
         chunk_repo = HrDocumentChunkRepository(self._session)
+        visibilities = self._effective_visibilities()
         mapped = chunk_repo.map_indexed_chunks_by_ids(
             [chunk_id for chunk_id, _ in ranked_scores],
             doc_type=doc_type,
+            visibilities=visibilities if visibilities else frozenset(),
         )
 
         items: list[HrDocumentSearchResultItem] = []

@@ -37,6 +37,7 @@ from smarthris.services.enrolment_import_processing_service import (
     EnrolmentImportProcessingService,
 )
 from smarthris.services.import_processing_service import process_import_job
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 
 
 class _TrackingSessionFactory:
@@ -75,6 +76,7 @@ def enrolment_settings(tmp_path: Path, integration_database_url: str) -> Setting
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=100_000,
         import_batch_size=50,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
 
 
@@ -82,6 +84,7 @@ def enrolment_settings(tmp_path: Path, integration_database_url: str) -> Setting
 def enrolment_api_client(
     db_session: Session,
     enrolment_settings: Settings,
+    hr_test_user,
 ) -> TestClient:
     app = create_app(enrolment_settings)
 
@@ -93,6 +96,7 @@ def enrolment_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

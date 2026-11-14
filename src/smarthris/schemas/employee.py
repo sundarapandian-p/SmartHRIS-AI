@@ -3,9 +3,10 @@
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from smarthris.models.employee import EmployeeStatus
+from smarthris.schemas.app_email import AppEmailStr
 
 
 class EmployeeSortField(str, Enum):
@@ -33,7 +34,7 @@ class EmployeeCreate(BaseModel):
     employee_number: str = Field(min_length=1, max_length=50)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    work_email: EmailStr
+    work_email: AppEmailStr
     department_id: int = Field(gt=0)
     job_role: str | None = Field(default=None, max_length=100)
     job_title: str | None = Field(default=None, max_length=150)
@@ -48,7 +49,7 @@ class EmployeeUpdate(BaseModel):
     employee_number: str | None = Field(default=None, min_length=1, max_length=50)
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
-    work_email: EmailStr | None = None
+    work_email: AppEmailStr | None = None
     department_id: int | None = Field(default=None, gt=0)
     job_role: str | None = Field(default=None, max_length=100)
     job_title: str | None = Field(default=None, max_length=150)
@@ -66,7 +67,7 @@ class EmployeeRead(BaseModel):
     employee_number: str
     first_name: str
     last_name: str
-    work_email: EmailStr
+    work_email: AppEmailStr
     department_id: int
     job_role: str | None
     job_title: str | None

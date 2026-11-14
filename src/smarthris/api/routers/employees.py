@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from smarthris.api.deps import get_db
+from smarthris.api.deps import get_current_active_user, get_db
+from smarthris.models.user import User
 from smarthris.models.employee import EmployeeStatus
 from smarthris.schemas.employee import (
     DirectReportsResponse,
@@ -21,8 +22,11 @@ from smarthris.services.employee_service import EmployeeService
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 
-def get_employee_service(db: Session = Depends(get_db)) -> EmployeeService:
-    return EmployeeService(db)
+def get_employee_service(
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_active_user),
+) -> EmployeeService:
+    return EmployeeService(db, actor=actor)
 
 
 @router.post("", response_model=EmployeeRead, status_code=201)

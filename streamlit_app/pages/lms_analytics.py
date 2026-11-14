@@ -8,6 +8,7 @@ from typing import Any
 import streamlit as st
 
 from streamlit_app.api_client import ApiError, SmartHrisApiClient
+from streamlit_app.auth import get_api_client, require_page_access
 from streamlit_app.constants import NAV_LMS_ANALYTICS
 
 STATUS_FILTER_ALL = "all"
@@ -323,13 +324,14 @@ def render_kpi_section(summary: dict[str, Any] | None, error: str | None) -> Non
 
 def render(*, api_client: SmartHrisApiClient | None = None) -> None:
     """LMS analytics dashboards (read-only)."""
+    require_page_access("lms_analytics")
     st.title(NAV_LMS_ANALYTICS)
     st.caption(
         "SQL-backed LMS analytics from the FastAPI backend. "
         "Completion % excludes cancelled enrolments from the denominator."
     )
     _ensure_defaults()
-    client = api_client if api_client is not None else SmartHrisApiClient()
+    client = api_client if api_client is not None else get_api_client()
 
     refresh_all = st.button("Refresh all", type="primary", key="lms_refresh_all")
 

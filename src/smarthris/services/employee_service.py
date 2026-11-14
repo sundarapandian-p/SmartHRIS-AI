@@ -12,8 +12,10 @@ from smarthris.core.constants import (
     HIERARCHY_MAX_NODES,
     MANAGER_CHAIN_VALIDATION_MAX,
 )
+from smarthris.core.access import assert_can_manage_employees, assert_can_read_employee
 from smarthris.core.exceptions import ConflictError, NotFoundError, ValidationError
 from smarthris.models.employee import Employee, EmployeeStatus
+from smarthris.models.user import User
 from smarthris.repositories.department_repository import DepartmentRepository
 from smarthris.repositories.employee_repository import EmployeeFilters, EmployeeRepository
 from smarthris.schemas.employee import (
@@ -31,12 +33,14 @@ from smarthris.schemas.employee import (
 
 
 class EmployeeService:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, *, actor: User) -> None:
         self._session = session
+        self._actor = actor
         self._employees = EmployeeRepository(session)
         self._departments = DepartmentRepository(session)
 
     def create(self, payload: EmployeeCreate) -> EmployeeRead:
+        assert_can_manage_employees(self._actor)
         self._ensure_department_exists(payload.department_id)
 
         employee = Employee(
@@ -63,12 +67,14 @@ class EmployeeService:
         return EmployeeRead.model_validate(employee)
 
     def get(self, employee_id: int) -> EmployeeRead:
+        assert_can_read_employee(self._actor, employee_id)
         employee = self._employees.get_by_id(employee_id)
         if employee is None:
             raise NotFoundError("Employee not found")
         return EmployeeRead.model_validate(employee)
 
     def get_manager(self, employee_id: int) -> ManagerResponse:
+        assert_can_read_employee(self._actor, employee_id)
         employee = self._employees.get_by_id(employee_id)
         if employee is None:
             raise NotFoundError("Employee not found")
@@ -80,6 +86,7 @@ class EmployeeService:
         return ManagerResponse(manager=EmployeeRead.model_validate(manager))
 
     def get_direct_reports(self, employee_id: int) -> DirectReportsResponse:
+        assert_can_manage_employees(self._actor)
         if self._employees.get_by_id(employee_id) is None:
             raise NotFoundError("Employee not found")
 
@@ -98,6 +105,7 @@ class EmployeeService:
         )
 
     def get_reporting_hierarchy(self, employee_id: int) -> EmployeeHierarchyResponse:
+        assert_can_manage_employees(self._actor)
         if self._employees.get_by_id(employee_id) is None:
             raise NotFoundError("Employee not found")
 
@@ -162,6 +170,7 @@ class EmployeeService:
         sort_by: EmployeeSortField = EmployeeSortField.ID,
         sort_order: SortOrder = SortOrder.ASC,
     ) -> EmployeeListResponse:
+        assert_can_manage_employees(self._actor)
         if page < 1:
             raise ValidationError("page must be >= 1")
         if page_size < 1 or page_size > 100:
@@ -195,6 +204,7 @@ class EmployeeService:
         )
 
     def update(self, employee_id: int, payload: EmployeeUpdate) -> EmployeeRead:
+        assert_can_manage_employees(self._actor)
         employee = self._employees.get_by_id(employee_id)
         if employee is None:
             raise NotFoundError("Employee not found")

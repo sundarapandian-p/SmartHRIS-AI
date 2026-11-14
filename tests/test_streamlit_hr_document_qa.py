@@ -81,8 +81,10 @@ def test_doc_type_for_api() -> None:
 
 def _run_page(api_client: RecordingRagClient | None = None) -> AppTest:
     def _script(client=None) -> None:
+        from streamlit_app.auth import enable_page_guard_bypass_for_tests
         from streamlit_app.pages.hr_document_qa import render as render_qa
 
+        enable_page_guard_bypass_for_tests()
         render_qa(api_client=client)
 
     return AppTest.from_function(

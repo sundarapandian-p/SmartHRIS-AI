@@ -16,7 +16,12 @@ from smarthris.core.exceptions import (
     StorageError,
     ValidationError,
 )
-from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import (
+    HrDocument,
+    HrDocumentStatus,
+    HrDocumentType,
+    HrDocumentVisibility,
+)
 from smarthris.rag.storage import delete_document_file, save_document_upload
 from smarthris.repositories.hr_document_repository import HrDocumentRepository
 from smarthris.schemas.hr_document import HrDocumentListResponse, HrDocumentRead
@@ -34,6 +39,7 @@ class HrDocumentService:
         upload: UploadFile,
         title: str | None = None,
         doc_type: HrDocumentType | None = None,
+        visibility: HrDocumentVisibility = HrDocumentVisibility.HR_ONLY,
     ) -> HrDocumentRead:
         """
         Store an uploaded PDF/DOCX/TXT privately and persist metadata.
@@ -70,6 +76,7 @@ class HrDocumentService:
                 storage_path=str(storage_path),
                 title=cleaned_title,
                 doc_type=resolved_type,
+                visibility=visibility,
                 status=HrDocumentStatus.PENDING,
             )
             self._documents.add(document)

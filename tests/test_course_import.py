@@ -28,6 +28,7 @@ from smarthris.repositories.import_error_repository import ImportErrorRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
 from smarthris.services.course_import_processing_service import CourseImportProcessingService
 from smarthris.services.import_processing_service import process_import_job
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 
 
 class _TrackingSessionFactory:
@@ -66,6 +67,7 @@ def course_import_settings(tmp_path: Path, integration_database_url: str) -> Set
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=100_000,
         import_batch_size=50,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
 
 
@@ -73,6 +75,7 @@ def course_import_settings(tmp_path: Path, integration_database_url: str) -> Set
 def course_api_client(
     db_session: Session,
     course_import_settings: Settings,
+    hr_test_user,
 ) -> TestClient:
     app = create_app(course_import_settings)
 
@@ -84,6 +87,7 @@ def course_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

@@ -26,6 +26,7 @@ from smarthris.repositories.import_error_repository import ImportErrorRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
 from smarthris.schemas.import_job import ImportJobRead
 from smarthris.services.import_upload_service import ImportUploadService
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 
 
 def _csv_body() -> str:
@@ -50,6 +51,7 @@ def import_settings(tmp_path: Path, integration_database_url: str) -> Settings:
         database_url=integration_database_url,
         import_temp_dir=str(tmp_path / "imports"),
         max_upload_bytes=200_000,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
 
 
@@ -57,6 +59,7 @@ def import_settings(tmp_path: Path, integration_database_url: str) -> Settings:
 def import_api_client(
     db_session: Session,
     import_settings: Settings,
+    hr_test_user,
 ) -> TestClient:
     app = create_app(import_settings)
 
@@ -68,6 +71,7 @@ def import_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()

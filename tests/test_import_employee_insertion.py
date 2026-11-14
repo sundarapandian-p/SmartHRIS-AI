@@ -21,7 +21,9 @@ from smarthris.models.import_job import ImportFileType, ImportJobStatus
 from smarthris.repositories.employee_repository import EmployeeRepository
 from smarthris.repositories.import_job_repository import ImportJobRepository
 from smarthris.services.import_processing_service import ImportProcessingService
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override, create_test_user
 from tests.test_import_background_processing import _TrackingSessionFactory
+from smarthris.models.user import UserRole
 
 
 def _csv(*rows: str) -> str:
@@ -390,8 +392,10 @@ def test_employee_crud_still_works(
         _env_file=None,
         database_url=integration_database_url,
         import_temp_dir=str(tmp_path / "imports"),
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
+    hr_user = create_test_user(db_session, role=UserRole.HR)
 
     def override_get_db():
         try:
@@ -401,6 +405,7 @@ def test_employee_crud_still_works(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_user)
     with TestClient(app) as client:
         response = client.post(
             "/employees",

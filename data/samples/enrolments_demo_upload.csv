@@ -1,0 +1,6 @@
+Employee Number,Course Code,Enrolment Date,Status,Completion Date,Score
+HR-DEMO-001,SAFE-101,2026-02-01,completed,2026-02-05,92.50
+HR-DEMO-001,LMS-PY-201,2026-02-10,in_progress,,
+HR-DEMO-002,SAFE-101,2026-02-03,completed,2026-02-07,88.00
+HR-DEMO-002,LMS-PY-201,2026-02-12,enrolled,,
+HR-DEMO-003,LMS-ONB-301,2026-02-01,enrolled,,

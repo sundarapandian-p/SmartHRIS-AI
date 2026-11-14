@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 
 from streamlit_app.api_client import ApiError, SmartHrisApiClient
+from streamlit_app.auth import get_api_client, require_page_access
 from streamlit_app.constants import NAV_EMPLOYEES
 
 # Backend EmployeeStatus values.
@@ -150,6 +151,7 @@ def fetch_and_store_employees(
 
 def render(*, api_client: SmartHrisApiClient | None = None) -> None:
     """Employee listing / verification (read-only)."""
+    require_page_access("employees")
     st.title(NAV_EMPLOYEES)
     st.caption(
         "Search and verify employees from the API. "
@@ -254,7 +256,7 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
         or SESSION_SNAPSHOT not in st.session_state
     )
 
-    client = api_client if api_client is not None else SmartHrisApiClient()
+    client = api_client if api_client is not None else get_api_client()
     if needs_fetch:
         _payload, error = fetch_and_store_employees(client, query)
         if error:

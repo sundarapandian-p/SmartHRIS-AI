@@ -73,6 +73,9 @@ def _client(handler) -> SmartHrisApiClient:
 
 
 def test_nav_items_match_sidebar_labels() -> None:
+    from smarthris.models.user import UserRole
+    from streamlit_app.auth import allowed_nav_titles
+
     assert NAV_ITEMS == (
         NAV_DASHBOARD,
         NAV_EMPLOYEES,
@@ -80,6 +83,7 @@ def test_nav_items_match_sidebar_labels() -> None:
         NAV_LMS_ANALYTICS,
         NAV_HR_DOCUMENT_QA,
     )
+    assert allowed_nav_titles(UserRole.HR) >= frozenset(NAV_ITEMS)
     assert NAV_DASHBOARD == "Dashboard"
     assert NAV_EMPLOYEES == "Employees"
     assert NAV_BULK_IMPORT == "Bulk Import"

@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from smarthris.importing.types import ImportRowIssue
+from smarthris.schemas.app_email import AppEmailStr
 from smarthris.importing.validation.error_codes import ImportErrorCode
 from smarthris.models.employee import EmployeeStatus
 
@@ -26,7 +27,7 @@ class EmployeeImportRow(BaseModel):
     employee_number: str = Field(min_length=1, max_length=50)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    work_email: EmailStr
+    work_email: AppEmailStr
     department_id: int | None = Field(default=None, gt=0)
     department_name: str | None = Field(default=None, max_length=120)
     job_role: str | None = Field(default=None, max_length=100)

@@ -12,6 +12,7 @@ from typing import Any
 import streamlit as st
 
 from streamlit_app.api_client import ApiError, SmartHrisApiClient
+from streamlit_app.auth import get_api_client, require_page_access
 from streamlit_app.constants import NAV_BULK_IMPORT
 
 # Matches Settings.max_upload_bytes default (50 MiB).
@@ -500,7 +501,7 @@ def _render_error_report(
         and int(cached.get("page_size") or 0) == int(page_size)
     )
     if reload_clicked or not cache_matches:
-        client = api_client if api_client is not None else SmartHrisApiClient()
+        client = api_client if api_client is not None else get_api_client()
         _payload, error = fetch_and_store_import_errors(
             client,
             job_id,
@@ -580,7 +581,7 @@ def _render_retry_section(
         return
 
     st.session_state[SESSION_RETRY_IN_FLIGHT] = True
-    client = api_client if api_client is not None else SmartHrisApiClient()
+    client = api_client if api_client is not None else get_api_client()
     try:
         child = client.retry_import(job_id)
     except ApiError as exc:
@@ -624,7 +625,7 @@ def _job_status_panel(
         SESSION_JOB_SNAPSHOT
     )
     if should_fetch:
-        client = api_client if api_client is not None else SmartHrisApiClient()
+        client = api_client if api_client is not None else get_api_client()
         _snapshot, error = fetch_and_store_job_status(client, str(job_id))
         if error:
             st.warning(f"Could not refresh status: {error}")
@@ -657,6 +658,7 @@ def _static_job_status_panel(api_client: SmartHrisApiClient | None = None) -> No
 
 def render(*, api_client: SmartHrisApiClient | None = None) -> None:
     """Render CSV upload controls and import job status (poll when non-terminal)."""
+    require_page_access("bulk_import")
     st.title(NAV_BULK_IMPORT)
 
     if SESSION_IMPORT_TARGET not in st.session_state:
@@ -754,7 +756,7 @@ def render(*, api_client: SmartHrisApiClient | None = None) -> None:
                     key="bulk_import_upload",
                 )
                 if upload_clicked:
-                    client = api_client if api_client is not None else SmartHrisApiClient()
+                    client = api_client if api_client is not None else get_api_client()
                     progress = st.progress(0, text="Uploading CSV to the API…")
                     try:
                         progress.progress(40, text="Uploading CSV to the API…")

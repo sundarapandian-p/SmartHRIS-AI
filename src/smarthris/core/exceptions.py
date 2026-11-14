@@ -43,3 +43,23 @@ class ServiceUnavailableError(AppError):
         code: str = "service_unavailable",
     ) -> None:
         super().__init__(message, code=code)
+
+
+class UnauthenticatedError(AppError):
+    def __init__(
+        self,
+        message: str = "Invalid email or password",
+        *,
+        code: str = "unauthenticated",
+    ) -> None:
+        super().__init__(message, code=code)
+
+
+class ForbiddenError(AppError):
+    def __init__(
+        self,
+        message: str = "You do not have permission to perform this action",
+        *,
+        code: str = "forbidden",
+    ) -> None:
+        super().__init__(message, code=code)

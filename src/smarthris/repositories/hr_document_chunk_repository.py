@@ -7,7 +7,12 @@ from collections.abc import Sequence
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
-from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import (
+    HrDocument,
+    HrDocumentStatus,
+    HrDocumentType,
+    HrDocumentVisibility,
+)
 from smarthris.models.hr_document_chunk import HrDocumentChunk
 
 
@@ -56,11 +61,29 @@ class HrDocumentChunkRepository:
         )
         return list(self._session.scalars(query).all())
 
+    def indexed_chunk_id_allowlist(
+        self,
+        *,
+        visibilities: frozenset[HrDocumentVisibility],
+    ) -> frozenset[int]:
+        """Chunk ids eligible for retrieval for the given visibility set."""
+        if not visibilities:
+            return frozenset()
+        query = (
+            select(HrDocumentChunk.id)
+            .join(HrDocument, HrDocumentChunk.document_id == HrDocument.id)
+            .where(HrDocument.status == HrDocumentStatus.INDEXED)
+            .where(HrDocument.visibility.in_(tuple(visibilities)))
+        )
+        rows = self._session.scalars(query).all()
+        return frozenset(int(chunk_id) for chunk_id in rows)
+
     def map_indexed_chunks_by_ids(
         self,
         chunk_ids: Sequence[int],
         *,
         doc_type: HrDocumentType | None = None,
+        visibilities: frozenset[HrDocumentVisibility] | None = None,
     ) -> dict[int, tuple[HrDocumentChunk, HrDocument]]:
         """
         Return chunks joined with parent documents for retrieval.
@@ -79,6 +102,8 @@ class HrDocumentChunkRepository:
         )
         if doc_type is not None:
             query = query.where(HrDocument.doc_type == doc_type)
+        if visibilities is not None:
+            query = query.where(HrDocument.visibility.in_(tuple(visibilities)))
 
         rows = self._session.execute(query).all()
         return {int(chunk.id): (chunk, document) for chunk, document in rows}

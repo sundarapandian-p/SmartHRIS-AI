@@ -1,0 +1,9 @@
+Company Leave Policy
+
+1. Employees receive 10 sick leave days per calendar year.
+2. A medical certificate is required when sick leave exceeds
+   3 consecutive working days.
+3. Employees must inform their manager when taking sick leave.
+4. Annual leave requests should be submitted to the manager
+   for approval.
+5. HR is responsible for maintaining employee leave records.

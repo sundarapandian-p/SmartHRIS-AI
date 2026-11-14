@@ -24,17 +24,20 @@ from smarthris.schemas.lms_analytics import (
     TrendGranularity,
 )
 from smarthris.services.lms_analytics_service import LmsAnalyticsService
+from tests.auth_helpers import TEST_JWT_SECRET, attach_active_user_override
 
 
 @pytest.fixture
 def analytics_api_client(
     db_session: Session,
     integration_database_url: str,
+    hr_test_user,
 ) -> TestClient:
     settings = Settings(
         _env_file=None,
         app_name="SmartHRIS-LMS-Analytics",
         database_url=integration_database_url,
+        jwt_secret_key=TEST_JWT_SECRET,
     )
     app = create_app(settings)
 
@@ -46,6 +49,7 @@ def analytics_api_client(
             raise
 
     app.dependency_overrides[get_db] = override_get_db
+    attach_active_user_override(app, hr_test_user)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

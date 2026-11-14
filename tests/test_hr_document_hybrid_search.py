@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from smarthris.config import Settings
 from smarthris.core.exceptions import ValidationError
-from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType
+from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType, HrDocumentVisibility
 from smarthris.rag.bm25_store import (
     rebuild_persisted_bm25_from_records,
     reset_bm25_cache_for_tests,
@@ -31,6 +31,7 @@ from smarthris.services.hr_document_retrieval_service import HrDocumentRetrieval
 
 from tests.test_hr_document_processing import MockEncoder, _TrackingSessionFactory, _settings
 from tests.test_hr_document_search import (
+    ALL_DOCUMENT_VISIBILITIES,
     _build_index,
     _seed_indexed_chunk,
     search_api_client,
@@ -146,7 +147,12 @@ def test_semantic_mode_regression(db_session: Session, tmp_path) -> None:
     doc_id = "00000000-0000-4000-8000-000000000701"
     _seed_indexed_chunk(db_session, doc_id=doc_id, chunk_id=701, chunk_text=text)
     settings = _build_index(tmp_path, [ChunkVectorRecord(chunk_id=701, chunk_text=text)])
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(
         HrDocumentSearchRequest(query="chunk", retrieval_mode=HrDocumentRetrievalMode.SEMANTIC),
     )
@@ -164,7 +170,12 @@ def test_keyword_mode_without_faiss(db_session: Session, tmp_path) -> None:
         [ChunkVectorRecord(chunk_id=801, chunk_text=text)],
         settings=settings,
     )
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(
         HrDocumentSearchRequest(query="annual leave", retrieval_mode=HrDocumentRetrievalMode.KEYWORD),
     )
@@ -182,7 +193,12 @@ def test_hybrid_mode(db_session: Session, tmp_path) -> None:
         [ChunkVectorRecord(chunk_id=901, chunk_text=text)],
         settings=settings,
     )
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(
         HrDocumentSearchRequest(query="annual", retrieval_mode=HrDocumentRetrievalMode.HYBRID),
     )
@@ -205,7 +221,12 @@ def test_stale_chunk_and_non_indexed_filtered(db_session: Session, tmp_path) -> 
         chunk_text="valid",
         status=HrDocumentStatus.FAILED,
     )
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(
         HrDocumentSearchRequest(query="orphan", retrieval_mode=HrDocumentRetrievalMode.HYBRID),
     )
@@ -227,7 +248,12 @@ def test_doc_type_filter(db_session: Session, tmp_path) -> None:
         [ChunkVectorRecord(chunk_id=1101, chunk_text=text)],
         settings=settings,
     )
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     response = service.search(
         HrDocumentSearchRequest(
             query="filter",
@@ -241,7 +267,12 @@ def test_doc_type_filter(db_session: Session, tmp_path) -> None:
 def test_candidates_must_cover_top_k(db_session: Session, tmp_path) -> None:
     settings = _settings(tmp_path)
     settings = settings.model_copy(update={"rag_retrieval_candidates": 2})
-    service = HrDocumentRetrievalService(db_session, settings, embedding_provider=MockEncoder())
+    service = HrDocumentRetrievalService(
+        db_session,
+        settings,
+        embedding_provider=MockEncoder(),
+        allowed_visibilities=ALL_DOCUMENT_VISIBILITIES,
+    )
     with pytest.raises(ValidationError, match="rag_retrieval_candidates"):
         service.search(HrDocumentSearchRequest(query="ok", top_k=5))
 

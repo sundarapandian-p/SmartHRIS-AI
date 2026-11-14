@@ -3,13 +3,17 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from smarthris.api.deps import get_db
+from smarthris.api.deps import RequireHrOrAdmin, get_db
 from smarthris.config import Settings
 from smarthris.schemas.import_job import ImportErrorListResponse, ImportJobRead
 from smarthris.services.import_processing_service import process_import_job
 from smarthris.services.import_upload_service import ImportUploadService
 
-router = APIRouter(prefix="/imports", tags=["imports"])
+router = APIRouter(
+    prefix="/imports",
+    tags=["imports"],
+    dependencies=[Depends(RequireHrOrAdmin)],
+)
 
 
 def get_settings_from_app(request: Request) -> Settings:

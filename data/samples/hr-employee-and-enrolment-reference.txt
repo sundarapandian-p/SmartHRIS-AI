@@ -1,0 +1,97 @@
+SmartHRIS Demo — Employee & Learning Records (HR Reference)
+
+This document summarizes current employees, reporting lines, and LMS
+enrolments for HR Q&A. Information is accurate as of February 2026.
+
+
+1. EMPLOYEE ROSTER
+
+1.1 Priya Sharma (Employee Number: HR-DEMO-001)
+    - Work email: priya.sharma@example.com
+    - Department: Human Resources (Department ID: 1)
+    - Job role: HR Specialist
+    - Job title: People Operations
+    - Hire date: 2024-03-01
+    - Employment status: active
+    - Manager: none (people operations lead)
+    - Responsibilities: employee records, leave tracking, onboarding coordination
+
+1.2 Arjun Mehta (Employee Number: HR-DEMO-002)
+    - Work email: arjun.mehta@example.com
+    - Department: Human Resources (Department ID: 1)
+    - Job role: Software Engineer
+    - Job title: Backend Developer
+    - Hire date: 2024-06-15
+    - Employment status: active
+    - Manager: none assigned in demo data
+    - Responsibilities: HRIS integrations and internal tooling
+
+1.3 Neha Kapoor (Employee Number: HR-DEMO-003)
+    - Work email: neha.kapoor@example.com
+    - Department: Analytics (Department ID: 2)
+    - Job role: Analyst
+    - Job title: HR Analyst
+    - Hire date: 2025-01-10
+    - Employment status: active
+    - Manager: Priya Sharma (HR-DEMO-001)
+    - Responsibilities: workforce analytics and compliance reporting
+
+
+2. LMS COURSE CATALOG (ACTIVE COURSES)
+
+2.1 SAFE-101 — Workplace Safety Basics
+    - Category: Compliance
+    - Duration: 2.5 hours
+    - Description: Fire safety, evacuation drills, and workplace hazard awareness
+    - Course status: active
+
+2.2 LMS-PY-201 — Python for HR Automation
+    - Category: Technical
+    - Duration: 8 hours
+    - Description: Scripting and data tasks for HR operations
+    - Course status: active
+
+2.3 LMS-ONB-301 — New Hire Onboarding
+    - Category: Onboarding
+    - Duration: 4 hours
+    - Description: Company policies, culture, and tools for new hires
+    - Course status: active
+
+
+3. ENROLMENTS AND COMPLETION STATUS
+
+3.1 Priya Sharma (HR-DEMO-001)
+    - SAFE-101: enrolled 2026-02-01, status completed, completion date 2026-02-05, score 92.50
+    - LMS-PY-201: enrolled 2026-02-10, status in_progress (not yet completed)
+
+3.2 Arjun Mehta (HR-DEMO-002)
+    - SAFE-101: enrolled 2026-02-03, status completed, completion date 2026-02-07, score 88.00
+    - LMS-PY-201: enrolled 2026-02-12, status enrolled (not started)
+
+3.3 Neha Kapoor (HR-DEMO-003)
+    - LMS-ONB-301: enrolled 2026-02-01, status enrolled (onboarding in progress)
+
+
+4. QUICK FACTS FOR HR QUESTIONS
+
+4.1 Who reports to Priya Sharma?
+    Neha Kapoor (HR-DEMO-003) reports to Priya Sharma.
+
+4.2 Who has completed Workplace Safety Basics (SAFE-101)?
+    Priya Sharma and Arjun Mehta have completed SAFE-101 with passing scores.
+
+4.3 Who is still enrolled but has not completed Python for HR Automation?
+    Priya Sharma is in_progress on LMS-PY-201. Arjun Mehta is enrolled but not started.
+
+4.4 Which new hire is on onboarding training?
+    Neha Kapoor is enrolled in LMS-ONB-301 (New Hire Onboarding).
+
+4.5 Leave policy reminder (see separate Company Leave Policy document):
+    Employees have 10 sick leave days per year; medical certificate required after
+    3 consecutive sick days; managers approve annual leave; HR maintains records.
+
+
+5. HR CONTACT
+
+For corrections to employee or training records, contact the People Operations
+team via priya.sharma@example.com (HR-DEMO-001).
