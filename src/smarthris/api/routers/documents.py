@@ -94,11 +94,10 @@ def search_documents(
     db: Session = Depends(get_db),
 ) -> HrDocumentSearchResponse:
     """
-    Semantic search over indexed document chunks (FAISS + MySQL).
+    Search indexed document chunks (semantic, keyword, or hybrid).
 
-    Malformed JSON or invalid fields may return HTTP 422; whitespace-only ``query``
-    returns HTTP 400. Requires a single Uvicorn worker (see README). Results may
-    briefly use the prior in-memory index while reindexing completes.
+    Default ``retrieval_mode`` is ``semantic``. See README for BM25/RRF, score
+    semantics, HTTP 422 vs 400, single-worker requirement, and in-memory index lag.
     """
     settings = get_settings_from_app(request)
     return HrDocumentRetrievalService(db, settings).search(payload)

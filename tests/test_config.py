@@ -53,6 +53,8 @@ def test_rag_settings_defaults() -> None:
     assert settings.rag_chunk_size == rag_defaults.DEFAULT_RAG_CHUNK_SIZE
     assert settings.rag_chunk_overlap == rag_defaults.DEFAULT_RAG_CHUNK_OVERLAP
     assert settings.rag_top_k == rag_defaults.DEFAULT_RAG_TOP_K
+    assert settings.rag_retrieval_candidates == rag_defaults.DEFAULT_RAG_RETRIEVAL_CANDIDATES
+    assert settings.rag_rrf_constant == rag_defaults.DEFAULT_RAG_RRF_CONSTANT
 
 
 def test_rag_settings_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,3 +86,10 @@ def test_rag_package_defaults_module_exports() -> None:
 def test_rag_top_k_rejects_values_above_20() -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, rag_top_k=21)
+
+
+def test_rag_retrieval_candidates_bounds() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, rag_retrieval_candidates=0)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, rag_retrieval_candidates=201)

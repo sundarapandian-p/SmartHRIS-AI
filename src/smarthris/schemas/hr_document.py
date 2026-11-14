@@ -1,10 +1,19 @@
 """Pydantic schemas for HR document metadata and chunks."""
 
+import enum
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType
+
+
+class HrDocumentRetrievalMode(str, enum.Enum):
+    """How document search combines vector and keyword retrieval."""
+
+    SEMANTIC = "semantic"
+    KEYWORD = "keyword"
+    HYBRID = "hybrid"
 
 
 class HrDocumentCreate(BaseModel):
@@ -58,11 +67,12 @@ class HrDocumentChunkCreate(BaseModel):
 
 
 class HrDocumentSearchRequest(BaseModel):
-    """Semantic search over indexed HR document chunks."""
+    """Search over indexed HR document chunks (semantic, keyword, or hybrid)."""
 
     query: str = Field(min_length=1, max_length=2000)
     top_k: int | None = Field(default=None, ge=1, le=20)
     doc_type: HrDocumentType | None = None
+    retrieval_mode: HrDocumentRetrievalMode = HrDocumentRetrievalMode.SEMANTIC
 
 
 class HrDocumentSearchResultItem(BaseModel):
@@ -82,10 +92,11 @@ class HrDocumentSearchResultItem(BaseModel):
 
 
 class HrDocumentSearchResponse(BaseModel):
-    """Semantic search response (no storage paths)."""
+    """Document search response (no storage paths)."""
 
     query: str = Field(min_length=1, max_length=2000)
     index_ready: bool
+    retrieval_mode: HrDocumentRetrievalMode = HrDocumentRetrievalMode.SEMANTIC
     items: list[HrDocumentSearchResultItem]
 
 

@@ -17,6 +17,7 @@ from smarthris.main import create_app
 from smarthris.models.hr_document import HrDocument, HrDocumentStatus, HrDocumentType
 from smarthris.models.hr_document_chunk import HrDocumentChunk
 from smarthris.rag.embeddings import DocumentProcessingError, reset_embedding_cache_for_tests
+from smarthris.rag.bm25_store import reset_bm25_cache_for_tests
 from smarthris.rag.faiss_search import reset_search_index_cache_for_tests, search_chunks_by_vector
 from smarthris.rag.faiss_store import ChunkVectorRecord, rebuild_index_from_records
 from smarthris.rag.storage import save_document_upload
@@ -32,6 +33,7 @@ from tests.test_hr_document_processing import MockEncoder, _settings
 def _reset_rag_caches() -> None:
     reset_embedding_cache_for_tests()
     reset_search_index_cache_for_tests()
+    reset_bm25_cache_for_tests()
 
 
 def _settings_search(tmp_path) -> Settings:

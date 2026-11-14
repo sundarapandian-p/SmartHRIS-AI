@@ -33,6 +33,9 @@ dev = [
     "httpx2>=0.1",
     "pytest>=8.3",
 ]
+rag-keyword = [
+    "rank-bm25>=0.2.2",
+]
 
 [project.scripts]
 smarthris-api = "smarthris.main:run"

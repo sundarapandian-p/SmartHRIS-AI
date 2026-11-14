@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +19,7 @@ from smarthris.rag.embeddings import (
     embedding_dimension,
 )
 from smarthris.rag.extraction import DocumentExtractionError, extract_document_text
+from smarthris.rag.bm25_store import rebuild_persisted_bm25_from_records
 from smarthris.rag.faiss_store import (
     ChunkVectorRecord,
     publish_index_after_mysql_commit,
@@ -30,6 +32,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_ERROR_MESSAGE_LEN = 1000
 _EMBED_BATCH_SIZE = 32
+
+# Process-local: serializes chunk replacement, corpus snapshot, MySQL index commit,
+# FAISS publish, and BM25 publish for all documents in this Python process.
+# Does not coordinate across multiple Uvicorn workers or OS processes.
+_document_indexing_pipeline_lock = threading.Lock()
 
 """
 Recovery for documents stuck in ``processing`` (e.g. after a process crash):
@@ -55,27 +62,32 @@ def reconcile_vector_index_from_database(
     *,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> None:
-    """Rebuild the live FAISS index from all ``indexed`` document chunks in MySQL."""
-    chunks_repo = HrDocumentChunkRepository(session)
-    rows = chunks_repo.list_for_index_rebuild()
-    records = [ChunkVectorRecord(chunk_id=row.id, chunk_text=row.chunk_text) for row in rows]
-    dimension = embedding_dimension(settings, provider=embedding_provider)
+    """Rebuild live FAISS and BM25 indexes from all ``indexed`` document chunks in MySQL."""
+    with _document_indexing_pipeline_lock:
+        chunks_repo = HrDocumentChunkRepository(session)
+        rows = chunks_repo.list_for_index_rebuild()
+        records = [ChunkVectorRecord(chunk_id=row.id, chunk_text=row.chunk_text) for row in rows]
+        dimension = embedding_dimension(settings, provider=embedding_provider)
 
-    def embed_batch(texts: list[str]):
-        return encode_texts(
-            texts,
+        def embed_batch(texts: list[str]):
+            return encode_texts(
+                texts,
+                settings=settings,
+                provider=embedding_provider,
+                batch_size=_EMBED_BATCH_SIZE,
+            )
+
+        rebuild_persisted_index_from_records(
+            records,
             settings=settings,
-            provider=embedding_provider,
+            dimension=dimension,
+            embed_fn=embed_batch,
             batch_size=_EMBED_BATCH_SIZE,
         )
-
-    rebuild_persisted_index_from_records(
-        records,
-        settings=settings,
-        dimension=dimension,
-        embed_fn=embed_batch,
-        batch_size=_EMBED_BATCH_SIZE,
-    )
+        try:
+            rebuild_persisted_bm25_from_records(records, settings=settings)
+        except Exception:
+            logger.exception("Failed to rebuild BM25 index during database reconciliation")
 
 
 class HrDocumentProcessingService:
@@ -191,6 +203,15 @@ class HrDocumentProcessingService:
         document: HrDocument,
         drafts: list[TextChunkDraft],
     ) -> None:
+        with _document_indexing_pipeline_lock:
+            self._replace_chunks_and_index_locked(session, document, drafts)
+
+    def _replace_chunks_and_index_locked(
+        self,
+        session: Session,
+        document: HrDocument,
+        drafts: list[TextChunkDraft],
+    ) -> None:
         documents = HrDocumentRepository(session)
         chunks_repo = HrDocumentChunkRepository(session)
         document_id = document.id
@@ -247,6 +268,12 @@ class HrDocumentProcessingService:
             batch_size=_EMBED_BATCH_SIZE,
             mysql_commit=commit_indexed,
         )
+        try:
+            rebuild_persisted_bm25_from_records(records, settings=self._settings)
+        except Exception:
+            logger.exception(
+                "Failed to rebuild BM25 index after successful document indexing",
+            )
 
     def _mark_failed(self, session: Session, document_id: str, message: str) -> None:
         try:

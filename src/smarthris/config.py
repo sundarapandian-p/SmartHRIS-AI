@@ -14,6 +14,8 @@ from smarthris.rag.config import (
     DEFAULT_RAG_CHUNK_SIZE,
     DEFAULT_RAG_DOCUMENT_DIR,
     DEFAULT_RAG_INDEX_DIR,
+    DEFAULT_RAG_RETRIEVAL_CANDIDATES,
+    DEFAULT_RAG_RRF_CONSTANT,
     DEFAULT_RAG_TOP_K,
 )
 
@@ -103,6 +105,20 @@ class Settings(BaseSettings):
         description="Default number of chunks to return from semantic search (max 20).",
         ge=1,
         le=20,
+    )
+    rag_retrieval_candidates: int = Field(
+        default=DEFAULT_RAG_RETRIEVAL_CANDIDATES,
+        validation_alias="RAG_RETRIEVAL_CANDIDATES",
+        description="Per-retriever candidate pool size before fusion (BM25/FAISS).",
+        ge=1,
+        le=200,
+    )
+    rag_rrf_constant: int = Field(
+        default=DEFAULT_RAG_RRF_CONSTANT,
+        validation_alias="RAG_RRF_CONSTANT",
+        description="Reciprocal Rank Fusion constant k.",
+        ge=1,
+        le=1000,
     )
 
     @computed_field  # type: ignore[prop-decorator]

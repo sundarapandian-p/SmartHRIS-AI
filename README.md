@@ -76,17 +76,46 @@ smarthris-api
 uvicorn smarthris.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-HR document upload runs background indexing against on-disk FAISS. Use a **single API worker** only (default for `smarthris-api` and `uvicorn` without `--workers`). Do not run `uvicorn ... --workers 2` (or more) with document indexing or **semantic search** enabled—the FAISS update lock is process-local and cannot serialize across workers. See `src/smarthris/rag/faiss_store.py`.
+HR document upload runs background indexing against on-disk FAISS. Use a **single API worker** only (default for `smarthris-api` and `uvicorn` without `--workers`). Do not run `uvicorn ... --workers 2` (or more) with document indexing or **semantic search** enabled—the FAISS/BM25 file locks and the document **indexing pipeline lock** are process-local and cannot serialize across workers or OS processes. See `src/smarthris/rag/faiss_store.py` and `src/smarthris/services/hr_document_processing_service.py`.
 
-### HR document semantic search (`POST /documents/search`)
+### HR document search (`POST /documents/search`)
 
-Send a JSON body with `query` (required), optional `top_k` (1–20, default from `RAG_TOP_K` in settings), and optional `doc_type`.
+Keyword search requires the **rank-bm25** package (not installed in the base optional set). From the project root with venv activated:
 
-- **HTTP 422** — malformed JSON or invalid request fields (e.g. empty `query`, `top_k` out of range) rejected by FastAPI/Pydantic before the handler runs.
+```powershell
+pip install "rank-bm25>=0.2.2"
+# or: pip install -e ".[rag-keyword]"
+```
+
+Send a JSON body with `query` (required), optional `top_k` (1–20, default `RAG_TOP_K`), optional `doc_type`, and optional `retrieval_mode` (`semantic` | `keyword` | `hybrid`, default **`semantic`** for backward compatibility).
+
+**Examples**
+
+```json
+{ "query": "annual leave policy", "retrieval_mode": "semantic" }
+```
+
+```json
+{ "query": "annual leave policy", "retrieval_mode": "keyword" }
+```
+
+```json
+{ "query": "annual leave policy", "retrieval_mode": "hybrid", "top_k": 5 }
+```
+
+- **semantic** — FAISS vector search (cosine-like inner product on normalized embeddings).
+- **keyword** — BM25 over the persisted chunk corpus (`rank-bm25`).
+- **hybrid** — runs both retrievers with `RAG_RETRIEVAL_CANDIDATES` (default 60) per channel, then **Reciprocal Rank Fusion** with `RAG_RRF_CONSTANT` (default 60). `score` is the raw retriever score for single-mode search and the **RRF score** for hybrid (not comparable across modes).
+
+**Index sync** — After a document is successfully indexed, the global **FAISS** and **BM25** indexes are rebuilt from the same MySQL `INDEXED` chunk rows. Database reconciliation rebuilds both. Hydration still returns only **INDEXED** documents and applies `doc_type`.
+
+**HTTP semantics**
+
+- **HTTP 422** — malformed JSON or invalid request fields (e.g. empty `query`, `top_k` out of range) rejected by FastAPI/Pydantic.
 - **HTTP 400** — whitespace-only `query` after trimming (handler validation).
-- **HTTP 200** — ranked hits, or `index_ready: false` with empty `items` when no compatible FAISS index exists.
+- **HTTP 200** — ranked hits, or `index_ready: false` when the required on-disk index for that mode is missing (`keyword` / `hybrid` may still return results if the other index is ready).
 
-During background **reindexing**, searches may briefly use the **previous in-memory FAISS index** until the on-disk index changes and the process reloads it. Run a single worker so indexing and search do not race across processes.
+During **reindexing**, searches may briefly use the **previous in-memory FAISS or BM25 index** until on-disk files change and the process reloads them. Use a **single API worker** (same requirement as indexing).
 
 Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for OpenAPI UI.
 
