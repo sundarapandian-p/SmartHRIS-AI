@@ -57,6 +57,38 @@ class HrDocumentChunkCreate(BaseModel):
     token_count: int | None = Field(default=None, ge=0)
 
 
+class HrDocumentSearchRequest(BaseModel):
+    """Semantic search over indexed HR document chunks."""
+
+    query: str = Field(min_length=1, max_length=2000)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    doc_type: HrDocumentType | None = None
+
+
+class HrDocumentSearchResultItem(BaseModel):
+    """One ranked chunk match from semantic search."""
+
+    rank: int = Field(ge=1)
+    score: float
+    chunk_id: int = Field(ge=1)
+    document_id: str = Field(min_length=36, max_length=36)
+    document_title: str = Field(min_length=1, max_length=255)
+    original_filename: str = Field(min_length=1, max_length=255)
+    doc_type: HrDocumentType
+    chunk_index: int = Field(ge=0)
+    chunk_text: str = Field(min_length=1)
+    page_number: int | None = Field(default=None, ge=1)
+    section_title: str | None = Field(default=None, max_length=255)
+
+
+class HrDocumentSearchResponse(BaseModel):
+    """Semantic search response (no storage paths)."""
+
+    query: str = Field(min_length=1, max_length=2000)
+    index_ready: bool
+    items: list[HrDocumentSearchResultItem]
+
+
 class HrDocumentChunkRead(BaseModel):
     """Public chunk metadata without chunk_text by default."""
 

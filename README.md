@@ -76,7 +76,17 @@ smarthris-api
 uvicorn smarthris.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-HR document upload runs background indexing against on-disk FAISS. Use a **single API worker** only (default for `smarthris-api` and `uvicorn` without `--workers`). Do not run `uvicorn ... --workers 2` (or more) with document indexing enabled—the FAISS update lock is process-local and cannot serialize across workers. See `src/smarthris/rag/faiss_store.py`.
+HR document upload runs background indexing against on-disk FAISS. Use a **single API worker** only (default for `smarthris-api` and `uvicorn` without `--workers`). Do not run `uvicorn ... --workers 2` (or more) with document indexing or **semantic search** enabled—the FAISS update lock is process-local and cannot serialize across workers. See `src/smarthris/rag/faiss_store.py`.
+
+### HR document semantic search (`POST /documents/search`)
+
+Send a JSON body with `query` (required), optional `top_k` (1–20, default from `RAG_TOP_K` in settings), and optional `doc_type`.
+
+- **HTTP 422** — malformed JSON or invalid request fields (e.g. empty `query`, `top_k` out of range) rejected by FastAPI/Pydantic before the handler runs.
+- **HTTP 400** — whitespace-only `query` after trimming (handler validation).
+- **HTTP 200** — ranked hits, or `index_ready: false` with empty `items` when no compatible FAISS index exists.
+
+During background **reindexing**, searches may briefly use the **previous in-memory FAISS index** until the on-disk index changes and the process reloads it. Run a single worker so indexing and search do not race across processes.
 
 Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for OpenAPI UI.
 

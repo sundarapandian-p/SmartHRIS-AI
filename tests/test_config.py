@@ -1,6 +1,7 @@
 """Tests for environment-based configuration."""
 
 import pytest
+from pydantic import ValidationError
 
 from smarthris.config import Settings, get_settings
 from smarthris.rag import config as rag_defaults
@@ -78,3 +79,8 @@ def test_rag_settings_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_rag_package_defaults_module_exports() -> None:
     assert rag_defaults.DEFAULT_RAG_CHUNK_OVERLAP < rag_defaults.DEFAULT_RAG_CHUNK_SIZE
     assert rag_defaults.DEFAULT_RAG_TOP_K >= 1
+
+
+def test_rag_top_k_rejects_values_above_20() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, rag_top_k=21)

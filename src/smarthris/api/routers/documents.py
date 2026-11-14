@@ -6,11 +6,17 @@ from sqlalchemy.orm import Session
 from smarthris.api.deps import get_db
 from smarthris.config import Settings
 from smarthris.models.hr_document import HrDocumentStatus, HrDocumentType
-from smarthris.schemas.hr_document import HrDocumentListResponse, HrDocumentRead
+from smarthris.schemas.hr_document import (
+    HrDocumentListResponse,
+    HrDocumentRead,
+    HrDocumentSearchRequest,
+    HrDocumentSearchResponse,
+)
 from smarthris.services.hr_document_processing_service import (
     process_hr_document,
     request_document_reindex,
 )
+from smarthris.services.hr_document_retrieval_service import HrDocumentRetrievalService
 from smarthris.services.hr_document_service import HrDocumentService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -79,6 +85,23 @@ def list_documents(
         doc_type=doc_type,
         status=status,
     )
+
+
+@router.post("/search", response_model=HrDocumentSearchResponse)
+def search_documents(
+    payload: HrDocumentSearchRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> HrDocumentSearchResponse:
+    """
+    Semantic search over indexed document chunks (FAISS + MySQL).
+
+    Malformed JSON or invalid fields may return HTTP 422; whitespace-only ``query``
+    returns HTTP 400. Requires a single Uvicorn worker (see README). Results may
+    briefly use the prior in-memory index while reindexing completes.
+    """
+    settings = get_settings_from_app(request)
+    return HrDocumentRetrievalService(db, settings).search(payload)
 
 
 @router.get("/{document_id}", response_model=HrDocumentRead)

@@ -100,8 +100,9 @@ class Settings(BaseSettings):
     rag_top_k: int = Field(
         default=DEFAULT_RAG_TOP_K,
         validation_alias="RAG_TOP_K",
-        description="Default number of chunks to return after hybrid retrieval.",
+        description="Default number of chunks to return from semantic search (max 20).",
         ge=1,
+        le=20,
     )
 
     @computed_field  # type: ignore[prop-decorator]
