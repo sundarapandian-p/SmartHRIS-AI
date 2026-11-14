@@ -10,11 +10,13 @@ import httpx
 import pytest
 
 from streamlit_app.api_client import ApiError, SmartHrisApiClient
+from streamlit_app.api_client import RAG_QUERY_TIMEOUT
 from streamlit_app.constants import (
     DEFAULT_API_BASE_URL,
     NAV_BULK_IMPORT,
     NAV_DASHBOARD,
     NAV_EMPLOYEES,
+    NAV_HR_DOCUMENT_QA,
     NAV_ITEMS,
     NAV_LMS_ANALYTICS,
 )
@@ -71,11 +73,18 @@ def _client(handler) -> SmartHrisApiClient:
 
 
 def test_nav_items_match_sidebar_labels() -> None:
-    assert NAV_ITEMS == (NAV_DASHBOARD, NAV_EMPLOYEES, NAV_BULK_IMPORT, NAV_LMS_ANALYTICS)
+    assert NAV_ITEMS == (
+        NAV_DASHBOARD,
+        NAV_EMPLOYEES,
+        NAV_BULK_IMPORT,
+        NAV_LMS_ANALYTICS,
+        NAV_HR_DOCUMENT_QA,
+    )
     assert NAV_DASHBOARD == "Dashboard"
     assert NAV_EMPLOYEES == "Employees"
     assert NAV_BULK_IMPORT == "Bulk Import"
     assert NAV_LMS_ANALYTICS == "LMS Analytics"
+    assert NAV_HR_DOCUMENT_QA == "HR Document Q&A"
 
 
 def test_default_base_url_constant(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -530,3 +539,115 @@ def test_non_json_success_response() -> None:
 
     with pytest.raises(ApiError, match="non-JSON"):
         _client(handler).get_health()
+
+
+def _rag_response(**overrides: object) -> dict:
+    base = {
+        "question": "leave?",
+        "answer": "Fifteen days [S1].",
+        "answer_status": "answered",
+        "retrieval_mode": "hybrid",
+        "index_ready": True,
+        "model": "llama3.2",
+        "sources": [
+            {
+                "rank": 1,
+                "chunk_id": 1,
+                "document_id": "00000000-0000-4000-8000-000000000001",
+                "document_title": "Leave Policy",
+                "original_filename": "leave.txt",
+                "doc_type": "policy",
+                "chunk_index": 0,
+                "page_number": 2,
+                "section_title": "Annual",
+                "excerpt": "Fifteen days annual leave.",
+                "score": 0.5,
+            }
+        ],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_query_rag_posts_json_body() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/rag/query"
+        captured["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json=_rag_response())
+
+    result = _client(handler).query_rag("How much leave?")
+    assert result.answer_status.value == "answered"
+    body = captured["body"]
+    assert body["question"] == "How much leave?"
+    assert body["retrieval_mode"] == "hybrid"
+    assert "doc_type" not in body
+    assert "top_k" not in body
+
+
+def test_query_rag_forwards_top_k_and_doc_type() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json=_rag_response())
+
+    _client(handler).query_rag(
+        "filtered",
+        retrieval_mode="semantic",
+        top_k=3,
+        doc_type="handbook",
+    )
+    body = captured["body"]
+    assert body["retrieval_mode"] == "semantic"
+    assert body["top_k"] == 3
+    assert body["doc_type"] == "handbook"
+
+
+def test_query_rag_http_400_raises_api_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "Question must not be empty", "code": "validation_error"})
+
+    with pytest.raises(ApiError) as exc_info:
+        _client(handler).query_rag("x")
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.code == "validation_error"
+
+
+def test_query_rag_http_503_raises_api_error_with_code() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            json={"detail": "The language model service is unavailable", "code": "ollama_unavailable"},
+        )
+
+    with pytest.raises(ApiError) as exc_info:
+        _client(handler).query_rag("leave?")
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "ollama_unavailable"
+
+
+def test_query_rag_uses_dedicated_timeout_not_default() -> None:
+    observed: list[httpx.Timeout] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_rag_response())
+
+    class _TimeoutRecordingClient(SmartHrisApiClient):
+        def _client(self, *, timeout=None):
+            if timeout is not None:
+                observed.append(timeout)
+            return super()._client(timeout=timeout)
+
+    _TimeoutRecordingClient(
+        base_url="http://test.local",
+        transport=httpx.MockTransport(handler),
+    ).query_rag("test")
+    assert observed
+    assert observed[0] == RAG_QUERY_TIMEOUT
+    assert observed[0] != SmartHrisApiClient(
+        base_url="http://test.local",
+        transport=httpx.MockTransport(handler),
+    ).timeout

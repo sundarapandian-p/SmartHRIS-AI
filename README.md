@@ -213,7 +213,30 @@ $env:API_BASE_URL = "http://127.0.0.1:8000"
 python -m streamlit run streamlit_app/app.py
 ```
 
-The shell provides sidebar pages **Dashboard**, **Employees**, and **Bulk Import**. Dashboard can check `GET /health`. Employee listing and CSV bulk-upload workflows are not implemented in this foundation phase.
+The shell provides sidebar pages **Dashboard**, **Employees**, **Bulk Import**, **LMS Analytics**, and **HR Document Q&A**. Dashboard can check `GET /health`.
+
+### HR Document Q&A (Streamlit)
+
+The **HR Document Q&A** page calls `POST /rag/query` on the FastAPI backend. It does **not** upload or index documents (use the API `POST /documents` flow for that).
+
+**Prerequisites**
+
+1. FastAPI API running (`smarthris-api` or uvicorn) with MySQL and indexed HR documents (`status: indexed`).
+2. Search indexes on disk (FAISS / optional BM25 for hybrid) built during indexing.
+3. **Ollama** running locally with the model configured on the API (`OLLAMA_MODEL`, default `llama3.2`). Pull the model first (`ollama pull llama3.2`).
+4. Optional: `$env:API_BASE_URL` if the API is not on `http://127.0.0.1:8000`.
+
+**UI behavior**
+
+- **Retrieval mode** — `hybrid` (default), `semantic`, or `keyword` (passed through to the API).
+- **Top K** — 1–20 chunks used for context (default 5).
+- **Document type** — optional filter: All, `policy`, `handbook`, or `other`.
+- **Chat history** — stored in the Streamlit session until you clear it or restart the app.
+- **Sources** — each answer can expand to show rank, title, filename, type, page, section, score, and a short **excerpt** (not full chunk text).
+- **Refusals** — when indexes are missing (`index_not_ready`) or no relevant chunks are found (`insufficient_context`), the API returns a fixed refusal message without calling Ollama.
+- **Errors** — API **503** usually means Ollama is down, timed out, or the model is missing; **400** / **422** mean validation or retrieval errors.
+
+**Security** — There is no authentication on document or RAG routes yet; treat this as an **internal development** tool. Sensitive policy text may appear in excerpts.
 
 ## 8. Run tests
 

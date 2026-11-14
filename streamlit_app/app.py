@@ -16,6 +16,7 @@ from streamlit_app.constants import (
     NAV_BULK_IMPORT,
     NAV_DASHBOARD,
     NAV_EMPLOYEES,
+    NAV_HR_DOCUMENT_QA,
     NAV_LMS_ANALYTICS,
 )
 
@@ -44,9 +45,19 @@ lms_analytics_page = st.Page(
     PAGES_DIR / "lms_analytics.py",
     title=NAV_LMS_ANALYTICS,
 )
+hr_document_qa_page = st.Page(
+    PAGES_DIR / "hr_document_qa.py",
+    title=NAV_HR_DOCUMENT_QA,
+)
 
 navigation = st.navigation(
-    [dashboard_page, employees_page, bulk_import_page, lms_analytics_page],
+    [
+        dashboard_page,
+        employees_page,
+        bulk_import_page,
+        lms_analytics_page,
+        hr_document_qa_page,
+    ],
     position="sidebar",
 )
 navigation.run()

@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from smarthris.schemas.employee import EmployeeListResponse, EmployeeSortField, SortOrder
+from smarthris.schemas.rag import RagQueryResponse
 from smarthris.schemas.health import HealthResponse
 from smarthris.schemas.import_job import ImportErrorListResponse, ImportJobRead
 from smarthris.schemas.lms_analytics import (
@@ -30,6 +31,7 @@ from streamlit_app.constants import DEFAULT_API_BASE_URL
 
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 UPLOAD_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
+RAG_QUERY_TIMEOUT = httpx.Timeout(130.0, connect=5.0)
 
 _STATUS_FALLBACKS: Mapping[int, str] = {
     400: "The request was invalid.",
@@ -150,6 +152,7 @@ class SmartHrisApiClient:
         *,
         params: Mapping[str, Any] | None = None,
         data: Mapping[str, Any] | None = None,
+        json: Mapping[str, Any] | None = None,
         files: Any = None,
         timeout: float | httpx.Timeout | None = None,
         expected_status: int | set[int] | None = None,
@@ -161,6 +164,7 @@ class SmartHrisApiClient:
                     path,
                     params=params,
                     data=data,
+                    json=json,
                     files=files,
                 )
         except httpx.TimeoutException as exc:
@@ -501,3 +505,29 @@ class SmartHrisApiClient:
             expected_status=200,
         )
         return self._validate_model(EnrolmentTrendsResponse, payload, status_code=200)
+
+    def query_rag(
+        self,
+        question: str,
+        *,
+        retrieval_mode: str = "hybrid",
+        top_k: int | None = None,
+        doc_type: str | None = None,
+    ) -> RagQueryResponse:
+        """POST /rag/query — HR document Q&A with a long read timeout for Ollama."""
+        body = self._omit_none(
+            {
+                "question": question,
+                "retrieval_mode": retrieval_mode,
+                "top_k": top_k,
+                "doc_type": doc_type,
+            }
+        )
+        payload = self._request_json(
+            "POST",
+            "/rag/query",
+            json=body,
+            timeout=RAG_QUERY_TIMEOUT,
+            expected_status=200,
+        )
+        return self._validate_model(RagQueryResponse, payload, status_code=200)
