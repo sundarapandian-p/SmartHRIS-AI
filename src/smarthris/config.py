@@ -10,6 +10,7 @@ from smarthris.rag.config import (
     DEFAULT_EMBEDDING_MODEL_NAME,
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_RAG_CHUNK_OVERLAP,
     DEFAULT_RAG_CHUNK_SIZE,
     DEFAULT_RAG_DOCUMENT_DIR,
@@ -71,6 +72,13 @@ class Settings(BaseSettings):
         default=DEFAULT_OLLAMA_MODEL,
         validation_alias="OLLAMA_MODEL",
         description="Default Ollama model tag for answer generation.",
+    )
+    ollama_request_timeout_seconds: float = Field(
+        default=DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS,
+        validation_alias="OLLAMA_REQUEST_TIMEOUT_SECONDS",
+        description="Read timeout for Ollama chat requests (seconds).",
+        gt=0,
+        le=600,
     )
     embedding_model_name: str = Field(
         default=DEFAULT_EMBEDDING_MODEL_NAME,

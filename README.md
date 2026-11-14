@@ -117,6 +117,71 @@ Send a JSON body with `query` (required), optional `top_k` (1–20, default `RAG
 
 During **reindexing**, searches may briefly use the **previous in-memory FAISS or BM25 index** until on-disk files change and the process reloads them. Use a **single API worker** (same requirement as indexing).
 
+### HR document Q&A (`POST /rag/query`)
+
+Answers HR policy questions using retrieved document excerpts and a local **Ollama** model. **Default `retrieval_mode` is `hybrid`** (unlike `/documents/search`, which defaults to `semantic`).
+
+**Configuration** (see `.env.example`):
+
+- `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
+- `OLLAMA_MODEL` (default `llama3.2`)
+- `OLLAMA_REQUEST_TIMEOUT_SECONDS` (default `120`)
+
+**Install Ollama later (not required for pytest):** install [Ollama](https://ollama.com/) on your machine or use a future Docker Compose profile, then run `ollama pull llama3.2` (or your chosen tag). Pytest mocks the Ollama HTTP API and does **not** need a running server.
+
+**Example request**
+
+```json
+{
+  "question": "How many days of annual leave do new hires receive?",
+  "retrieval_mode": "hybrid",
+  "top_k": 5
+}
+```
+
+**Example response**
+
+```json
+{
+  "question": "How many days of annual leave do new hires receive?",
+  "answer": "New hires receive fifteen days per year [S1].",
+  "answer_status": "answered",
+  "retrieval_mode": "hybrid",
+  "index_ready": true,
+  "sources": [
+    {
+      "rank": 1,
+      "chunk_id": 501,
+      "document_id": "00000000-0000-4000-8000-000000000501",
+      "document_title": "Leave Policy",
+      "original_filename": "leave-policy.txt",
+      "doc_type": "policy",
+      "chunk_index": 0,
+      "page_number": 2,
+      "section_title": "Annual leave",
+      "excerpt": "Employees receive fifteen days of annual leave.",
+      "score": 0.031
+    }
+  ],
+  "model": "llama3.2"
+}
+```
+
+**Refusal (deterministic, no Ollama call)**
+
+- `answer_status`: `index_not_ready` when indexes required for retrieval are missing (`index_ready: false`).
+- `answer_status`: `insufficient_context` when retrieval returns no usable chunks (empty fusion/list after hydration).
+- Fixed refusal text: *I don't have enough information in the indexed HR documents to answer that.*
+
+**HTTP semantics**
+
+- **HTTP 422** — invalid JSON or field validation (e.g. empty `question` at the schema layer).
+- **HTTP 400** — whitespace-only `question` after trimming.
+- **HTTP 200** — answered or deterministic refusal as above.
+- **HTTP 503** — Ollama unreachable, timeout, missing model, or invalid upstream response (`code`: `ollama_unavailable`, `ollama_timeout`, or `ollama_model_error`). Upstream bodies are not exposed.
+
+**Security (development stage)** — There is **no API authentication** on document or RAG routes yet. Treat this as an internal learning tool. Do not log prompts or document excerpts at INFO level in production configurations. Uploaded policies may contain sensitive HR text; citations return short excerpts only, not full chunk bodies or storage paths.
+
 Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for OpenAPI UI.
 
 ### Health check

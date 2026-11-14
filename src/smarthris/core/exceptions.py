@@ -33,3 +33,13 @@ class PayloadTooLargeError(AppError):
 class StorageError(AppError):
     def __init__(self, message: str = "Failed to store uploaded file") -> None:
         super().__init__(message, code="storage_error")
+
+
+class ServiceUnavailableError(AppError):
+    def __init__(
+        self,
+        message: str = "Service temporarily unavailable",
+        *,
+        code: str = "service_unavailable",
+    ) -> None:
+        super().__init__(message, code=code)

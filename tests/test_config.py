@@ -47,6 +47,7 @@ def test_rag_settings_defaults() -> None:
     settings = Settings(_env_file=None)
     assert settings.ollama_base_url == rag_defaults.DEFAULT_OLLAMA_BASE_URL
     assert settings.ollama_model == rag_defaults.DEFAULT_OLLAMA_MODEL
+    assert settings.ollama_request_timeout_seconds == rag_defaults.DEFAULT_OLLAMA_REQUEST_TIMEOUT_SECONDS
     assert settings.embedding_model_name == rag_defaults.DEFAULT_EMBEDDING_MODEL_NAME
     assert settings.rag_document_dir == rag_defaults.DEFAULT_RAG_DOCUMENT_DIR
     assert settings.rag_index_dir == rag_defaults.DEFAULT_RAG_INDEX_DIR

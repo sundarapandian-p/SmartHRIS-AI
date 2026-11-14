@@ -9,6 +9,7 @@ from smarthris.core.exceptions import (
     ConflictError,
     NotFoundError,
     PayloadTooLargeError,
+    ServiceUnavailableError,
     StorageError,
     ValidationError,
 )
@@ -52,6 +53,16 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_handler(_request: Request, exc: ValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=400,
+            content={"detail": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(ServiceUnavailableError)
+    async def service_unavailable_handler(
+        _request: Request,
+        exc: ServiceUnavailableError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
             content={"detail": exc.message, "code": exc.code},
         )
 
